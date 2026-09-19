@@ -9,4 +9,4 @@ for (const file of ['index.html', 'styles.css', 'app.js']) {
   await cp(new URL(`./${file}`, root), new URL(`./${file}`, dist))
 }
 await cp(new URL('./assets/', root), new URL('./assets/', dist), { recursive: true })
-console.log('Built One pice static frontend to dist/')
+console.log('Built One Wish static frontend to dist/')

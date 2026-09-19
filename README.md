@@ -1,4 +1,4 @@
-# One pice — Wanted AI Championship real MVP
+# One Wish — Wanted AI Championship real MVP
 
 공모전 시안 4개(홈 / 위시 만들기 / 공동 위시룸 / AI 완성)를 실제 작동하는 흐름으로 구현한 Vercel용 MVP입니다.
 
@@ -14,9 +14,7 @@
 - AI Completion Engine: 상품 URL 재분석 → 현재 가격 비교 → 부족금액 재계산
 - 판매자 `마지막 조각` 포털 및 지원금 반영
 - Kakao JavaScript Key가 있으면 Kakao Talk Share SDK 사용
-- 미설정 환경에서는 브라우저 데모 모드로 모든 핵심 버튼이 동작
-- 데모 모드의 공유 링크에는 현재 위시 상태를 담아 새 브라우저에서도 진행률과 메시지를 재현
-- 상품 페이지를 읽을 수 없는 경우 API는 500 대신 `PRODUCT_FETCH_FAILED` 422를 반환하고 UI는 데모 흐름을 유지
+- 미설정 환경에서는 로컬 데모 모드로 모든 핵심 버튼이 동작
 
 ## Vercel 배포
 
