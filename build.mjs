@@ -1,11 +1,12 @@
-import fs from 'node:fs'
-import path from 'node:path'
+import { cp, mkdir, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 
-const out = path.resolve('dist')
-fs.rmSync(out, { recursive: true, force: true })
-fs.mkdirSync(out, { recursive: true })
+const root = new URL('.', import.meta.url)
+const dist = new URL('./dist/', root)
+if (existsSync(dist)) await rm(dist, { recursive: true, force: true })
+await mkdir(dist, { recursive: true })
 for (const file of ['index.html', 'styles.css', 'app.js']) {
-  fs.copyFileSync(path.resolve(file), path.join(out, file))
+  await cp(new URL(`./${file}`, root), new URL(`./${file}`, dist))
 }
-fs.cpSync(path.resolve('assets'), path.join(out, 'assets'), { recursive: true })
-console.log('Built static One pice app to dist/')
+await cp(new URL('./assets/', root), new URL('./assets/', dist), { recursive: true })
+console.log('Built One pice static frontend to dist/')
