@@ -1,10 +1,10 @@
 {
   "name": "onewish-real-mvp",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "check": "node --check app.js && node --check api/analyze.js && node --check api/rooms.js && node --check api/contributions.js && node --check api/messages.js && node --check api/ai-plan.js && node --check api/room-action.js && node --check api/seller-offer.js"
+    "check": "node --check app.js && node --check firebase-client.js && node --check api/analyze.js && node --check api/ai-plan.js && node --check api/config.js"
   }
 }

@@ -1,14 +1,14 @@
-import { json, methodNotAllowed, safeText } from '../lib/http.js'
-import { dbReady, getRoom } from '../lib/db.js'
+import { body, json, methodNotAllowed } from '../lib/http.js'
 import { analyzeProduct, buildCompletionPlan } from '../lib/product.js'
 
 export default async function handler(req, res) {
-  if (req.method !== 'GET') return methodNotAllowed(res, ['GET'])
-  if (!dbReady()) return json(res, 503, { ok:false, error:'Supabase가 아직 연결되지 않았어요.', code:'SUPABASE_NOT_CONFIGURED' })
+  if (req.method !== 'POST') return methodNotAllowed(res, ['POST'])
   try {
-    const roomId = safeText(req.query?.room_id, 100)
-    const room = await getRoom(roomId)
-    if (!room) return json(res, 404, { ok:false, error:'위시룸을 찾지 못했어요.' })
+    const input = await body(req)
+    const room = input?.room && typeof input.room === 'object' ? input.room : null
+    if (!room?.product || !Number(room.current_price || room.list_price || room.product?.price)) {
+      return json(res, 400, { ok:false, error:'현재 위시룸 정보가 필요해요.' })
+    }
     let refreshed = null
     if (room.product?.url) {
       try { refreshed = await analyzeProduct(room.product.url) } catch {}

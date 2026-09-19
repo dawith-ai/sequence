@@ -33,7 +33,7 @@ const DEFAULT_STATE = {
   selfAmount: 50000,
   selectedContribution: 30000,
   liked: false,
-  config: { features:{ sharedRooms:false, ai:false, kakao:false }, kakaoJsKey:'' },
+  config: { features:{ sharedRooms:false, ai:false, kakao:false }, database:'firebase-firestore', kakaoJsKey:'' },
   room: null,
   roomId: null,
   aiPlan: null,
@@ -46,6 +46,7 @@ const DEFAULT_STATE = {
 
 let state = loadState()
 let pollTimer = null
+let firebaseUnsubscribe = null
 
 function esc(value='') {
   return String(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]))
@@ -111,20 +112,32 @@ async function api(path, options={}){
 }
 
 async function loadConfig(){
-  try{ state.config=(await api('/api/config')).features ? await (async()=>{const r=await api('/api/config'); return r})() : state.config }catch{}
+  let remote={features:{sharedRooms:false,ai:false,kakao:false},database:'firebase-firestore',kakaoJsKey:''}
+  try{ remote=await api('/api/config') }catch{}
+  let firebaseLive=false
+  try{ firebaseLive=Boolean(window.OneWishDB?.ready && await window.OneWishDB.checkConnection()) }catch{}
+  state.config={
+    ...remote,
+    database:'firebase-firestore',
+    features:{...(remote.features||{}),sharedRooms:firebaseLive}
+  }
 }
 
 async function refreshRoom({silent=false}={}){
   if(!state.roomId){ state.room=demoRoom(); return }
-  if(state.config.features.sharedRooms && !String(state.roomId).startsWith('local-') && state.roomId!=='demo'){
+  if(state.config.features.sharedRooms && window.OneWishDB?.ready && !String(state.roomId).startsWith('local-') && state.roomId!=='demo'){
     try{
-      const data=await api(`/api/rooms?id=${encodeURIComponent(state.roomId)}`)
-      state.room=data.room
+      const room=await window.OneWishDB.getRoom(state.roomId)
+      if(!room) throw new Error('위시룸을 찾지 못했어요.')
+      state.room=room
       state.product={...DEFAULT_PRODUCT,...state.room.product,price:state.room.current_price||state.room.product?.price}
       state.live=true
       if(!silent) render()
       return
-    }catch(error){ if(!silent) toast(error.message) }
+    }catch(error){
+      state.live=false
+      if(!silent) toast(`Firebase 연결 실패: ${error.message}`)
+    }
   }
   state.live=false
   state.room = state.roomId==='demo' ? demoRoom() : (loadLocalRoom(state.roomId) || demoRoom())
@@ -158,6 +171,17 @@ function roomCalc(room=activeRoom()){
   return { price, secured, shortfall:Math.max(0,price-secured), progress:price?fmtPct(secured/price*100):0, friendAmount:Number(room.friend_amount||0), participantCount:Number(room.participant_count ?? (room.contributions||[]).length) }
 }
 function progressHTML(value){ return `<div class="progress"><span style="width:${fmtPct(value)}%"></span></div>` }
+function giftMosaic(product, progress){
+  const total=12, filled=Math.max(0,Math.min(total,Math.round(fmtPct(progress)/100*total)))
+  const image=attr(safeImage(product?.image||'/assets/product-main.png'))
+  const pieces=Array.from({length:total},(_,i)=>{
+    const col=i%4,row=Math.floor(i/4)
+    const x=col===0?0:col===3?100:(col/3*100)
+    const y=row===0?0:row===2?100:50
+    return `<div class="gift-piece ${i<filled?'filled':''}" style="--piece-image:url(&quot;${image}&quot;);--piece-x:${x}%;--piece-y:${y}%"><span class="piece-state">${i<filled?'✓':'+'}</span></div>`
+  }).join('')
+  return `<div class="gift-mosaic-wrap"><div class="gift-mosaic">${pieces}</div><div class="piece-caption"><b>${filled} / ${total} 조각 완성</b><span>${filled<total?`친구들의 마음이 ${total-filled}조각만 더 모이면 선물이 완성돼요.`:'모든 조각이 채워졌어요! 🎉'}</span></div></div>`
+}
 function avatarStack(count=5){
   const room=activeRoom(); const names=(room.contributions||[]).slice(0,4).map(c=>initials(c.nickname)); while(names.length<4) names.push(['윤','현','서','채'][names.length])
   const extra=Math.max(0,(roomCalc(room).participantCount||count)-4)
@@ -173,8 +197,8 @@ function header(active='home'){
 }
 function sourceStatus(){
   const f=state.config.features
-  if(f.sharedRooms && f.ai) return '<span class="live-chip">● LIVE · AI + 공동 위시룸</span>'
-  if(f.sharedRooms) return '<span class="live-chip">● LIVE · 공동 위시룸</span>'
+  if(f.sharedRooms && f.ai) return '<span class="live-chip">● FIREBASE LIVE · AI</span>'
+  if(f.sharedRooms) return '<span class="live-chip">● FIREBASE LIVE</span>'
   return '<span class="demo-chip">DEMO MODE</span>'
 }
 function howCard(num,icon,title,text){return `<div class="card how-card"><div class="how-num">${num}</div><div style="font-size:22px;margin-bottom:8px">${icon}</div><h3>${title}</h3><p>${text}</p></div>`}
@@ -201,15 +225,15 @@ function createPage(){
   <div class="budget-grid"><div class="budget-card"><b>⊕　내가 부담할 금액</b><div class="muted" style="font-size:12px">내가 먼저 마음을 더해보세요. (선택사항)</div><div class="amount" id="selfAmountLabel">${won(state.selfAmount)}</div><input class="range" id="selfRange" type="range" min="0" max="${Math.max(1000,Number(product.price||419000))}" step="1000" value="${Math.min(state.selfAmount,Number(product.price||419000))}"><div class="progress-label"><span>0원</span><span>${won(product.price||419000)}</span></div></div><div class="budget-card group-budget"><b>👥　친구들과 함께 채울 금액</b><div class="amount" id="groupAmountLabel">${won(group)}</div><div class="muted">함께하는 만큼, 더 특별한 선물이 될 거예요.</div><div style="margin-top:14px">${avatarStack()}</div></div></div>
   <div class="wish-info-form"><label><span>위시룸 제목</span><input id="roomTitle" class="input" value="친구의 생일 위시"></label><label><span>마음을 담은 한마디</span><input id="creatorMessage" class="input" value="함께하는 마음이 더 특별한 선물을 만들어요. 💜"></label></div>
   <div class="create-actions"><button class="btn secondary" data-route="home">←　이전으로</button><button class="btn primary" id="createRoomBtn" ${state.creating?'disabled':''}>${state.creating?'위시룸 만드는 중...':'위시룸 생성하기　→'}</button></div></section>
-  <aside class="card guide"><div class="guide-top"><img src="/assets/guide-robot.png" alt="AI 가이드"><div><span class="pill purple">AI 추천 ✨</span><h3>AI가 제안하는<br>위시 가이드</h3><div class="muted">이런 점을 고려해보세요!</div></div></div><div class="guide-item"><div><b>👥 추천 참여 인원</b><small>이 가격대는 보통 4~8명이 함께해요.</small></div><strong>4 ~ 8명</strong></div><div class="guide-item"><div><b>◷ 예상 1인 부담금</b><small>친구 6명이 함께하면 이 정도예요.</small></div><strong>${won(Math.ceil(group/6/1000)*1000)}</strong></div><div class="guide-item"><div><b>♡ 좋은 타이밍이에요</b><small>생일·기념일처럼 마음을 함께 모으는 순간에 어울려요.</small></div><strong>생일 · 기념일</strong></div><div class="guide-item"><div><b>✦ AI 한 줄 팁</b><small>“${esc(product.ai_tip||DEFAULT_PRODUCT.ai_tip)}”</small></div></div><h3 class="option-title">추천 분담금 옵션</h3><p class="option-copy">친구들이 부담 없이 참여할 수 있는 금액을 설정해보세요.</p><div class="options">${option(5000,'가볍게 참여하기','8명 이상 추천')}${option(10000,'부담 없는 선택','5~8명 추천')}${option(30000,'더 빠르게 완성','3~5명 추천',true)}</div><button class="direct-option" id="directAmountCreate">✎ 직접 금액 설정하기</button><div class="backend-note">${state.config.features.sharedRooms?'✓ 실제 공유 가능한 위시룸 DB 연결됨':'ⓘ Supabase 환경변수를 연결하면 친구 기기와 실시간 공유됩니다.'}</div></aside></div></div></main></div>`
+  <aside class="card guide"><div class="guide-top"><img src="/assets/guide-robot.png" alt="AI 가이드"><div><span class="pill purple">AI 추천 ✨</span><h3>AI가 제안하는<br>위시 가이드</h3><div class="muted">이런 점을 고려해보세요!</div></div></div><div class="guide-item"><div><b>👥 추천 참여 인원</b><small>이 가격대는 보통 4~8명이 함께해요.</small></div><strong>4 ~ 8명</strong></div><div class="guide-item"><div><b>◷ 예상 1인 부담금</b><small>친구 6명이 함께하면 이 정도예요.</small></div><strong>${won(Math.ceil(group/6/1000)*1000)}</strong></div><div class="guide-item"><div><b>♡ 좋은 타이밍이에요</b><small>생일·기념일처럼 마음을 함께 모으는 순간에 어울려요.</small></div><strong>생일 · 기념일</strong></div><div class="guide-item"><div><b>✦ AI 한 줄 팁</b><small>“${esc(product.ai_tip||DEFAULT_PRODUCT.ai_tip)}”</small></div></div><h3 class="option-title">추천 분담금 옵션</h3><p class="option-copy">친구들이 부담 없이 참여할 수 있는 금액을 설정해보세요.</p><div class="options">${option(5000,'가볍게 참여하기','8명 이상 추천')}${option(10000,'부담 없는 선택','5~8명 추천')}${option(30000,'더 빠르게 완성','3~5명 추천',true)}</div><button class="direct-option" id="directAmountCreate">✎ 직접 금액 설정하기</button><div class="backend-note">${state.config.features.sharedRooms?'✓ 실제 공유 가능한 위시룸 DB 연결됨':'ⓘ Firebase Firestore를 활성화하면 친구 기기와 실시간 공유됩니다.'}</div></aside></div></div></main></div>`
 }
 function option(amount,label,rec,featured=false){ return `<button class="option ${state.selectedContribution===amount?'active':''}" data-option="${amount}">${featured?'<span class="option-badge">👑 가장 많이 선택해요</span>':''}<strong>${won(amount)}</strong><small>${label}<br>(${rec})</small></button>` }
 
 function roomPage(){
-  const room=activeRoom(), product=productOf(room), calc=roomCalc(room), filled=Math.max(0,Math.round(calc.progress/100*8))
+  const room=activeRoom(), product=productOf(room), calc=roomCalc(room)
   const messages=(room.messages?.length?room.messages:DEMO_MESSAGES).slice(0,8)
   return `<div class="shell room-page">${header('room')}<main class="page"><div class="container"><div class="room-top"><div class="title-block"><button class="btn soft" data-route="home" style="height:40px;padding:0 14px">← 전체 위시룸 보기</button><h1 class="headline">${esc(room.title||'친구의 생일 위시')}　🎂</h1><p class="subline">좋은 친구들과 함께 만드는 특별한 선물이에요!</p></div><div class="room-actions"><div class="d-day">📅　D-7　선물일까지</div><button class="btn kakao share-btn">🟨　카카오톡으로 공유</button><button class="btn secondary" id="roomMenuBtn">•••</button></div></div>
-  <div class="room-grid"><div class="room-main"><section class="card wish-card"><div class="wish-product-grid"><div class="wish-visual"><div class="confetti"><span></span><span></span><span></span></div>${productImg(product)}<div class="wish-hand">좋은 음악이<br>더 좋은 순간을 만든다 ♫</div></div><div class="wish-info"><div style="display:flex;justify-content:space-between;gap:10px"><div><div class="muted">${esc(product.brand)}</div><h2>${esc(product.name)}</h2></div>${state.live?'<span class="live-chip">● LIVE</span>':'<span class="demo-chip">DEMO</span>'}</div><div class="muted">${esc(product.description)}</div><div class="wish-price">${won(calc.price)}</div><div class="pill purple">${calc.completed?'선물이 완성됐어요! 🎉':'조금만 더! 멋진 선물이 완성돼요 💜'}</div><div class="puzzle">${Array.from({length:8},(_,i)=>`<div class="piece ${i<filled?'filled':''}"></div>`).join('')}</div><div class="room-progress-row"><span class="room-pct">${calc.progress}%</span><span class="room-collected">${won(calc.secured)} 모였어요!</span></div>${progressHTML(calc.progress)}<div class="room-meta"><span>👥 ${calc.participantCount}명이 함께하고 있어요</span><span>목표 ${won(calc.price)}</span><span>${calc.completed?'완성!':won(calc.shortfall)+' 남았어요'}</span></div>${Number(room.seller_subsidy||0)>0?`<div class="seller-inline">🎁 판매자가 마지막 조각 <b>${won(room.seller_subsidy)}</b>을 보탰어요.</div>`:''}</div></div></section>
+  <div class="room-grid"><div class="room-main"><section class="card wish-card"><div class="wish-product-grid"><div class="wish-visual"><div class="confetti"><span></span><span></span><span></span></div>${productImg(product)}<div class="wish-hand">좋은 음악이<br>더 좋은 순간을 만든다 ♫</div></div><div class="wish-info"><div style="display:flex;justify-content:space-between;gap:10px"><div><div class="muted">${esc(product.brand)}</div><h2>${esc(product.name)}</h2></div>${state.live?'<span class="live-chip">● LIVE</span>':'<span class="demo-chip">DEMO</span>'}</div><div class="muted">${esc(product.description)}</div><div class="wish-price">${won(calc.price)}</div><div class="pill purple">${calc.completed?'선물이 완성됐어요! 🎉':'조금만 더! 멋진 선물이 완성돼요 💜'}</div>${giftMosaic(product,calc.progress)}<div class="room-progress-row"><span class="room-pct">${calc.progress}%</span><span class="room-collected">${won(calc.secured)} 모였어요!</span></div>${progressHTML(calc.progress)}<div class="room-meta"><span>👥 ${calc.participantCount}명이 함께하고 있어요</span><span>목표 ${won(calc.price)}</span><span>${calc.completed?'완성!':won(calc.shortfall)+' 남았어요'}</span></div>${Number(room.seller_subsidy||0)>0?`<div class="seller-inline">🎁 판매자가 마지막 조각 <b>${won(room.seller_subsidy)}</b>을 보탰어요.</div>`:''}</div></div></section>
   <section class="card contribution"><div class="contribution-head"><div><h3>💜　한 조각 보태기</h3><div class="muted">작은 마음이 모여, 정말 특별한 선물이 돼요.</div></div><div class="privacy">🔒 내가 낸 금액은 친구들에게 공개되지 않아요.</div></div><div class="contributor-fields"><input class="input" id="nicknameInput" placeholder="닉네임" value="친구"><input class="input" id="contributionMessage" placeholder="짧은 응원 메시지 (선택)"></div><div class="amount-options">${amountButton(5000)}${amountButton(10000)}${amountButton(30000,true)}<button class="amount-btn" data-custom="1">직접 입력</button></div><button class="btn primary full" id="contributeBtn" ${calc.completed?'disabled':''}>🎁　${calc.completed?'선물 완성됨':won(state.selectedContribution)+' 한 조각 보태기　✨'}</button></section></div>
   <div style="display:grid;gap:14px"><section class="card friends-panel"><div style="display:flex;justify-content:space-between;align-items:center"><h3>함께하는 친구들</h3><button class="text-btn" id="allFriendsBtn">모두 보기　→</button></div><div class="friend-big">${avatarStack()}</div><div style="font-size:21px;font-weight:950">${calc.participantCount}명이 함께하고 있어요!</div><div class="friend-stats"><div class="friend-stat">${calc.participantCount}명<small>참여 친구</small></div><div class="friend-stat">${won(calc.participantCount?Math.round(calc.friendAmount/calc.participantCount):0)}<small>평균 참여 금액</small></div><div class="friend-stat">${calc.progress}%<small>달성률</small></div></div></section><section class="card feed-panel"><h3>💬　실시간 응원 메시지</h3><div class="feed">${messages.map(m=>`<div class="feed-item"><div class="feed-avatar">${esc(initials(m.nickname||m.name))}</div><div><div><b>${esc(m.nickname||m.name||'친구')}</b><span class="feed-time">${esc(m.time||nowLabel(m.created_at))}</span></div><p>${esc(m.text)}</p></div></div>`).join('')}</div><div class="comment-row"><input id="commentInput" placeholder="응원메시지를 남겨보세요..."><button id="commentBtn">☺</button></div></section></div>
   <aside class="card invite-panel"><h3>이런 카드로<br>친구들을 초대해보세요!</h3><div class="invite-phone"><div class="invite-screen"><div class="brand" style="justify-content:center;font-size:16px"><span class="brand-mark" style="width:25px;height:25px"></span>One Wish</div><h3 style="margin:12px 0 4px">${esc(room.title||'친구의 생일 위시')} 🎂</h3><div class="muted" style="font-size:12px">좋은 사람들이 함께 만드는<br>더 특별한 선물</div><div class="invite-thumb">${productImg(product)}</div>${progressHTML(calc.progress)}<div class="progress-label"><span>${won(calc.secured)}</span><b>${calc.progress}%</b></div><div style="margin:12px 0">${avatarStack()}</div><button class="btn primary full share-btn">지금 함께하기　→</button></div></div><div class="hand">함께하는 마음이<br>더 큰 행복이 되니까 ♥</div></aside></div></div></main></div>`
@@ -223,8 +247,12 @@ function aiFallbackPlan(room){
 async function prepareAIPlan(force=true){
   const room=activeRoom()
   if(force) state.aiPlan=null
-  if(state.config.features.sharedRooms && state.roomId && state.roomId!=='demo' && !String(state.roomId).startsWith('local-')){
-    try{ const data=await api(`/api/ai-plan?room_id=${encodeURIComponent(state.roomId)}`); state.aiPlan=data.plan; return data.plan }catch(error){ if(force) toast('실시간 가격 확인에 실패해 현재 데이터로 제안할게요.') }
+  if(state.config.features.ai){
+    try{
+      const data=await api('/api/ai-plan',{method:'POST',body:JSON.stringify({room})})
+      state.aiPlan=data.plan
+      return data.plan
+    }catch(error){ if(force) toast('실시간 가격 확인에 실패해 현재 데이터로 제안할게요.') }
   }
   state.aiPlan=aiFallbackPlan(room); return state.aiPlan
 }
@@ -248,14 +276,14 @@ function explorePage(){
   const product=state.product
   return `<div class="shell">${header('explore')}<main class="page"><div class="container"><div class="page-head"><div class="eyebrow">POPULAR WISHES</div><h1 class="headline">지금, 이런 위시가 인기예요</h1><p class="subline">카테고리를 넘어 ‘정말 원하는 하나’를 함께 완성해보세요.</p></div><div class="explore-grid">${['전자기기','패션','여행 / 경험'].map((cat,i)=>`<div class="card explore-card"><div class="explore-image">${productImg(product)}</div><span class="pill ${i===0?'orange':'purple'}">${cat}</span><h3>${i===0?esc(product.name):i===1?'함께 고르는 프리미엄 위시':'주말 여행 경험 위시'}</h3><p>${i===0?won(product.price):i===1?'350,000원':'780,000원'}</p><button class="btn ${i===0?'primary':'secondary'} full" ${i===0?'data-route="room"':'id="futureWishBtn"'}>${i===0?'이 위시 보기':'확장 데모 보기'}</button></div>`).join('')}</div></div></main></div>`
 }
-function guidePage(){return `<div class="shell">${header('guide')}<main class="page"><div class="container"><div class="page-head"><div class="eyebrow">HOW IT WORKS</div><h1 class="headline">3분이면 이해되는 One Wish</h1><p class="subline">상품을 가져오고, 마음을 모으고, AI가 마지막까지 실제 완성을 돕습니다.</p></div><div class="how-grid" style="margin-top:24px">${howCard('01','🔗','실제 상품 URL 분석','상품 페이지의 메타데이터를 읽고 Gemini가 상품명·가격·카테고리·선물 문구를 구조화합니다.')}${howCard('02','👥','공유 가능한 위시룸','Supabase에 위시룸과 참여 내역을 저장해 다른 휴대폰에서도 같은 진행률을 봅니다.')}${howCard('03','✨','AI Completion Engine','현재 가격과 모인 금액, 판매자 지원을 다시 계산해 실제 완성 가능한 경로만 제안합니다.')}</div><div class="card architecture"><div><b>Product URL</b><span>실제 상품</span></div><i>→</i><div><b>AI Analyze</b><span>Gemini</span></div><i>→</i><div><b>Shared Room</b><span>Supabase</span></div><i>→</i><div><b>Completion</b><span>AI + Seller</span></div></div></div></main></div>`}
+function guidePage(){return `<div class="shell">${header('guide')}<main class="page"><div class="container"><div class="page-head"><div class="eyebrow">HOW IT WORKS</div><h1 class="headline">3분이면 이해되는 One Wish</h1><p class="subline">상품을 가져오고, 마음을 모으고, AI가 마지막까지 실제 완성을 돕습니다.</p></div><div class="how-grid" style="margin-top:24px">${howCard('01','🔗','실제 상품 URL 분석','상품 페이지의 메타데이터를 읽고 Gemini가 상품명·가격·카테고리·선물 문구를 구조화합니다.')}${howCard('02','👥','공유 가능한 위시룸','Firebase Firestore에 위시룸과 참여 내역을 저장하고 실시간 동기화해 다른 휴대폰에서도 같은 진행률을 봅니다.')}${howCard('03','✨','AI Completion Engine','현재 가격과 모인 금액, 판매자 지원을 다시 계산해 실제 완성 가능한 경로만 제안합니다.')}</div><div class="card architecture"><div><b>Product URL</b><span>실제 상품</span></div><i>→</i><div><b>AI Analyze</b><span>Gemini</span></div><i>→</i><div><b>Shared Room</b><span>Firebase</span></div><i>→</i><div><b>Completion</b><span>AI + Seller</span></div></div></div></main></div>`}
 
 function render(){
   stopPolling()
   const route=state.route
   app.innerHTML = route==='home'?home():route==='create'?createPage():route==='room'?roomPage():route==='ai'?aiPage():route==='seller'?sellerPage():route==='explore'?explorePage():guidePage()
   wire()
-  if(route==='room' && state.live) startPolling()
+  if(['room','ai','seller'].includes(route) && state.live) startPolling()
 }
 
 function stopPolling(){ if(pollTimer){clearInterval(pollTimer);pollTimer=null} }
@@ -289,15 +317,15 @@ async function createRoomFromUI(){
   const creatorMessage=document.getElementById('creatorMessage')?.value.trim()||'함께하는 마음이 더 특별한 선물을 만들어요. 💜'
   state.creating=true; render()
   try{
-    if(state.config.features.sharedRooms){
-      const data=await api('/api/rooms',{method:'POST',body:JSON.stringify({title,product:state.product,self_amount:state.selfAmount,creator_message:creatorMessage,occasion:'birthday'})})
-      state.room=data.room; state.roomId=data.room.id; state.live=true
-      toast('실제 공유 가능한 위시룸이 만들어졌어요 🎁')
+    if(state.config.features.sharedRooms && window.OneWishDB?.ready){
+      const room=await window.OneWishDB.createRoom({title,product:state.product,self_amount:state.selfAmount,list_price:state.product.price,current_price:state.product.price,creator_message:creatorMessage,occasion:'birthday'})
+      state.room=room; state.roomId=room.id; state.live=true
+      toast('Firebase 실시간 위시룸이 만들어졌어요 🎁')
     }else{
       const id='local-'+crypto.randomUUID()
       const room=enrichLocalRoom({id,title,occasion:'birthday',product:{...state.product},self_amount:state.selfAmount,list_price:state.product.price,current_price:state.product.price,seller_subsidy:0,seller_offer_label:null,creator_message:creatorMessage,status:'active',contributions:[],messages:[]})
       state.room=room; state.roomId=id; state.live=false; saveLocalRoom(room)
-      toast('데모 위시룸이 만들어졌어요. Supabase 연결 시 친구 기기와 실시간 공유됩니다.')
+      toast('데모 위시룸이 만들어졌어요. Firebase Firestore 연결 시 친구 기기와 실시간 공유됩니다.')
     }
     state.route='room'; state.creating=false; saveState(); updateUrl('room'); render(); window.scrollTo({top:0,behavior:'smooth'})
   }catch(error){ state.creating=false; toast(error.message); render() }
@@ -310,9 +338,8 @@ async function contributeFromUI(){
   const nickname=document.getElementById('nicknameInput')?.value.trim()||'친구'
   const message=document.getElementById('contributionMessage')?.value.trim()||`${won(amount)}의 마음을 한 조각 보탰어요 💜`
   try{
-    if(state.live){
-      const data=await api('/api/contributions',{method:'POST',body:JSON.stringify({room_id:state.roomId,amount,nickname,message})})
-      state.room=data.room
+    if(state.live && window.OneWishDB?.ready){
+      state.room=await window.OneWishDB.addContribution(state.roomId,{amount,nickname,message})
     }else{
       room.contributions=[...(room.contributions||[]),{id:crypto.randomUUID(),nickname,amount,created_at:new Date().toISOString()}]
       room.messages=[{nickname,text:message,created_at:new Date().toISOString()},...(room.messages||[])]
@@ -326,7 +353,7 @@ async function contributeFromUI(){
 async function addMessageFromUI(){
   const text=document.getElementById('commentInput')?.value.trim(); if(!text)return
   try{
-    if(state.live){ const data=await api('/api/messages',{method:'POST',body:JSON.stringify({room_id:state.roomId,nickname:'친구',text})}); state.room=data.room }
+    if(state.live && window.OneWishDB?.ready){ state.room=await window.OneWishDB.addMessage(state.roomId,{nickname:'친구',text}) }
     else{ const room=activeRoom(); room.messages=[{nickname:'친구',text,created_at:new Date().toISOString()},...(room.messages||[])]; state.room=enrichLocalRoom(room); saveLocalRoom(state.room) }
     toast('응원 메시지를 남겼어요'); render()
   }catch(error){toast(error.message)}
@@ -336,7 +363,7 @@ async function applyRecommendedPrice(){
   const room=activeRoom(), plan=state.aiPlan||aiFallbackPlan(room), price=Number(plan.recommended_price||roomCalc(room).price)
   if(price>=roomCalc(room).price){toast('현재 가격보다 더 낮은 가격이 아직 확인되지 않았어요.');return}
   try{
-    if(state.live){ const data=await api('/api/room-action',{method:'POST',body:JSON.stringify({room_id:state.roomId,action:'apply_price',price})}); state.room=data.room }
+    if(state.live && window.OneWishDB?.ready){ state.room=await window.OneWishDB.applyPrice(state.roomId,price) }
     else{ room.current_price=price; state.room=enrichLocalRoom(room); saveLocalRoom(state.room) }
     state.aiPlan=null; toast(`새 목표금액 ${won(price)}을 적용했어요.`); await prepareAIPlan(false); render()
   }catch(error){toast(error.message)}
@@ -349,7 +376,7 @@ async function fillGapFromAI(){
   if(amount<=0){toast('이미 선물이 완성되었어요! 🎉');return}
   state.selectedContribution=amount
   try{
-    if(state.live){ const data=await api('/api/contributions',{method:'POST',body:JSON.stringify({room_id:state.roomId,amount,nickname:'위시 만든 사람',message:`마지막 ${won(amount)}을 채워 선물을 완성했어요 🎉`})}); state.room=data.room }
+    if(state.live && window.OneWishDB?.ready){ state.room=await window.OneWishDB.addContribution(state.roomId,{amount,nickname:'위시 만든 사람',message:`마지막 ${won(amount)}을 채워 선물을 완성했어요 🎉`}) }
     else{ const r=activeRoom(); r.contributions=[...(r.contributions||[]),{id:crypto.randomUUID(),nickname:'위시 만든 사람',amount,created_at:new Date().toISOString()}]; r.messages=[{nickname:'One Wish',text:'마지막 조각이 채워져 선물이 완성됐어요! 🎉',created_at:new Date().toISOString()},...(r.messages||[])]; state.room=enrichLocalRoom(r); saveLocalRoom(state.room) }
     toast('마지막 조각을 채워 선물이 완성됐어요 🎉'); state.aiPlan=null; render()
   }catch(error){toast(error.message)}
@@ -359,7 +386,7 @@ async function submitSellerOffer(){
   const amount=Math.max(0,Number(document.getElementById('sellerAmount')?.value||0)); const label=document.getElementById('sellerLabel')?.value.trim()||'브랜드가 마지막 조각을 보탭니다.'
   const room=activeRoom()
   try{
-    if(state.live){ const data=await api('/api/seller-offer',{method:'POST',body:JSON.stringify({room_id:state.roomId,subsidy:amount,label})}); state.room=data.room }
+    if(state.live && window.OneWishDB?.ready){ state.room=await window.OneWishDB.applySellerOffer(state.roomId,amount,label) }
     else{ room.seller_subsidy=Math.min(amount,roomCalc(room).shortfall); room.seller_offer_label=label; state.room=enrichLocalRoom(room); saveLocalRoom(state.room) }
     toast('판매자 마지막 조각 제안이 위시룸에 반영됐어요 🎁'); render()
   }catch(error){toast(error.message)}
@@ -439,7 +466,7 @@ window.addEventListener('popstate',async()=>{parseLocation(); if(state.route==='
 
 async function init(){
   parseLocation()
-  try{ const cfg=await api('/api/config'); state.config=cfg }catch{}
+  await loadConfig()
   if(state.roomId) await refreshRoom({silent:true}); else state.room=demoRoom()
   if(state.route==='ai') await prepareAIPlan(false)
   render()

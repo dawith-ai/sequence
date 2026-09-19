@@ -50,3 +50,14 @@
 
 @media(max-width:1220px){.seller-dashboard-grid,.seller-demand-card{grid-template-columns:1fr}.seller-business-grid,.explore-grid{grid-template-columns:1fr}.wish-info-form{grid-template-columns:1fr}.seller-hero{align-items:flex-start;flex-direction:column}.seller-kpis{grid-template-columns:1fr 1fr}.contributor-fields{grid-template-columns:1fr}}
 @media(max-width:760px){.seller-kpis{grid-template-columns:1fr}.architecture{display:grid}.copy-row{grid-template-columns:1fr}.source-status{display:none}}
+
+
+/* ===== One Wish gift mosaic: 실제 상품이 조각조각 완성되는 경험 ===== */
+.gift-mosaic-wrap{margin:18px 0 16px}.gift-mosaic{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:10px;border-radius:22px;background:linear-gradient(145deg,#f6f3ff,#fbfbff);border:1px solid #e6e0ff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.65)}
+.gift-piece{position:relative;aspect-ratio:1.65/1;border-radius:14px;overflow:hidden;border:1px solid #ded8fb;background-image:var(--piece-image);background-size:400% 300%;background-position:var(--piece-x) var(--piece-y);background-repeat:no-repeat;box-shadow:0 8px 18px rgba(81,64,164,.06);transition:transform .25s ease,filter .3s ease,box-shadow .3s ease}
+.gift-piece::after{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(248,247,255,.93),rgba(236,233,255,.86));backdrop-filter:blur(4px);transition:opacity .35s ease}
+.gift-piece.filled{border-color:rgba(111,82,255,.35);box-shadow:0 10px 22px rgba(102,77,222,.15);animation:piecePop .42s cubic-bezier(.2,.9,.25,1.15) both}.gift-piece.filled::after{opacity:0}.gift-piece.filled:hover{transform:translateY(-2px) scale(1.015)}
+.piece-state{position:absolute;right:8px;top:8px;z-index:2;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#fff;color:#9a91c9;font-size:13px;font-weight:950;box-shadow:0 6px 14px rgba(57,46,115,.12)}.gift-piece.filled .piece-state{background:linear-gradient(135deg,#7658ff,#8a6aff);color:#fff}
+.piece-caption{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 4px 0}.piece-caption b{font-size:15px;color:#684eff}.piece-caption span{font-size:12px;color:#74728a;text-align:right}
+@keyframes piecePop{0%{transform:scale(.93);opacity:.65}100%{transform:scale(1);opacity:1}}
+@media(max-width:760px){.gift-mosaic{grid-template-columns:repeat(3,minmax(0,1fr))}.gift-piece{aspect-ratio:1.35/1}.piece-caption{align-items:flex-start;flex-direction:column}.piece-caption span{text-align:left}}
