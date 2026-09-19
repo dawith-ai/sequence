@@ -7,7 +7,7 @@ const DEFAULT_PRODUCT = {
   brand: 'Apple',
   price: 419000,
   list_price: 419000,
-  url: 'https://www.apple.com/kr/shop/product/airpods-max',
+  url: 'https://www.apple.com/kr/airpods-max/',
   source: 'Apple 공식 홈페이지',
   description: '음악이 주는 가장 특별한 순간, 함께.',
   image: '/assets/product-main.png',
