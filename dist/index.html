@@ -1,20 +1,19 @@
 <!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#6b55ff" />
-  <meta name="description" content="친구들과 한 조각씩 마음을 모아 AI가 끝까지 완성하는 새로운 선물 경험, One Wish" />
-  <meta property="og:title" content="One Wish — 작은 선물 여러 개보다, 정말 원하는 하나" />
-  <meta property="og:description" content="친구들과 함께 정말 원하는 하나를 완성해보세요." />
-  <meta property="og:type" content="website" />
-  <title>One Wish — 작은 선물 여러 개보다, 정말 원하는 하나</title>
-  <link rel="stylesheet" href="/styles.css" />
-</head>
-<body>
-  <div id="app"><div class="boot-screen"><div class="brand-mark"></div><b>One Wish</b><span>선물 경험을 준비하고 있어요...</span></div></div>
-  <div id="toast" class="toast" aria-live="polite"></div>
-  <div id="modal-root"></div>
-  <script src="/app.js" defer></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0c2c24" />
+    <meta name="description" content="친구들과 한 판, 시퀀스 아레나" />
+    <title>시퀀스 아레나 | 온라인 카드 게임</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="toast" class="toast" aria-live="polite"></div>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
+    <script src="/firebase-config.js" defer></script>
+    <script src="/app.js" defer></script>
+  </body>
 </html>

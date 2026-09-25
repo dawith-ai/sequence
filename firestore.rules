@@ -1,42 +1,9 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /rooms/{roomId} {
-      allow read: if true;
-      allow create: if request.resource.data.title is string
-                    && request.resource.data.product is map
-                    && request.resource.data.list_price is number
-                    && request.resource.data.list_price > 0
-                    && request.resource.data.self_amount is number
-                    && request.resource.data.self_amount >= 0;
-      allow update: if request.resource.data.list_price == resource.data.list_price
-                    && request.resource.data.self_amount == resource.data.self_amount
-                    && request.resource.data.product == resource.data.product
-                    && request.resource.data.current_price is number
-                    && request.resource.data.current_price > 0
-                    && request.resource.data.seller_subsidy is number
-                    && request.resource.data.seller_subsidy >= 0;
-      allow delete: if false;
-
-      match /contributions/{contributionId} {
-        allow read: if true;
-        allow create: if request.resource.data.nickname is string
-                      && request.resource.data.amount is number
-                      && request.resource.data.amount >= 1000
-                      && request.resource.data.amount <= 5000000
-                      && request.resource.data.created_at is string;
-        allow update, delete: if false;
-      }
-
-      match /messages/{messageId} {
-        allow read: if true;
-        allow create: if request.resource.data.nickname is string
-                      && request.resource.data.text is string
-                      && request.resource.data.text.size() > 0
-                      && request.resource.data.text.size() <= 500
-                      && request.resource.data.created_at is string;
-        allow update, delete: if false;
-      }
+    match /sequenceRooms/{roomCode} {
+      allow read, write: if true;
     }
   }
 }

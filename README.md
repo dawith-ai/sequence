@@ -1,34 +1,30 @@
-# One Wish — Firebase Real MVP
+# 시퀀스 아레나
 
-원티드 AI Championship 2026 제출용 실제 MVP입니다.
+친구들을 테이블로 불러 모아 카드 다섯 장을 한 줄로 잇는 온라인 시퀀스 게임입니다.
 
-## 이번 버전의 핵심
-- Supabase 제거 → Firebase Firestore 전환
-- 다른 휴대폰/브라우저에서 같은 위시룸 공유
-- Firestore 실시간 onSnapshot 동기화
-- 참여금, 응원 메시지, 판매자 마지막 조각 실시간 반영
-- 상품 진행률을 보라색 블록이 아니라 **실제 상품 이미지 12조각이 채워지는 모자이크 UI**로 변경
-- Gemini 상품 URL 분석 / AI Completion Engine은 Vercel Functions 유지
+## 포함 기능
 
-## Firebase 설정
-Firebase 프로젝트: `one-wish-a40b0`
+- 2~12명 게임과 3명·5명 등 홀수 인원 지원
+- 공개 방 / 비공개 방, 초대 코드, 대기실
+- 랜덤 첫 차례 뽑기와 60초 턴 타이머
+- 숫자순·모양순 손패 정렬, 최근 착수 강조, 내 차례 조명
+- 빨간 잭 칩 제거, 검은 잭 자유 배치, 죽은 카드 교환
+- 시퀀스 완성 애니메이션과 셔플 효과음·배경음악
+- Firebase Firestore 실시간 방 동기화
 
-### 1. Firestore Database 생성
-Firebase Console → Firestore Database → Create database
+## Firebase
 
-### 2. Rules 적용
-프로젝트의 `firestore.rules` 내용을 Firebase Console → Firestore → Rules에 붙여넣고 Publish 합니다.
+Firebase 프로젝트: `sequence-arena-dawith`
 
-공모전 데모를 빠르게 동작시키기 위한 public-demo 규칙입니다. 정식 서비스 전에는 Firebase Auth + App Check를 붙이는 것을 권장합니다.
+Firestore 리전은 `asia-northeast1`이며, 게임 상태는 `sequenceRooms/{방코드}`에 저장됩니다.
+현재 규칙은 인증 없는 공개 데모용입니다. 실제 서비스 전에는 Firebase Auth와 App Check를 추가해야 합니다.
 
-### 3. Vercel
-별도의 Supabase 환경변수는 더 이상 필요하지 않습니다.
-Gemini 실제 분석을 쓰려면 Vercel Production 환경변수에 아래만 추가합니다.
-- `GEMINI_API_KEY`
-- 선택: `KAKAO_JS_KEY`
+## 개발 / 배포
 
-## 검증
 ```bash
 npm run check
 npm run build
+firebase deploy --only firestore:rules
 ```
+
+정적 프론트엔드는 `index.html`, `app.js`, `styles.css`와 `dist/` 산출물로 구성됩니다.
