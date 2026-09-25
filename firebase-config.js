@@ -11,6 +11,5 @@ window.addEventListener('load', () => {
   if (!window.firebase || !window.SequenceFirebaseConfig?.projectId) return
   if (!firebase.apps.length) firebase.initializeApp(window.SequenceFirebaseConfig)
   window.SequenceDB = firebase.firestore()
-  window.SequenceDB.settings({ ignoreUndefinedProperties: true })
   window.dispatchEvent(new CustomEvent('sequence-firebase-ready'))
 })
