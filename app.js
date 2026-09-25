@@ -278,7 +278,7 @@ async function createRoom(form) {
   setName(playerName)
   const room = newRoom({ name: roomName, playerName, maxPlayers, visibility, password })
   state.room = room; state.code = room.code; state.view = 'lobby'; if (data.get('sound')) state.soundOn = true
-  await persistRoom(); saveState(); if (state.soundOn) startAudio(); render(); toast(`방이 만들어졌어요 · ${room.code}`)
+  await persistRoom(); saveState(); subscribeRoom(); if (state.soundOn) startAudio(); render(); toast(`방이 만들어졌어요 · ${room.code}`)
 }
 async function joinRoom(code) {
   code = code.trim().toUpperCase()
