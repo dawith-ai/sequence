@@ -532,6 +532,20 @@ function render() {
   wire()
 }
 function enterRoom(room) { state.demoMode = false; state.room = room; state.code = room.code; state.view = room.status === 'playing' ? 'game' : 'lobby'; setRoomUrl(room.code); saveState(); subscribeRoom(); render() }
+function rejoinExistingPlayer(room, player) {
+  state.currentPlayerId = player.id
+  sessionStorage.setItem('sequence-session', player.id)
+  setName(player.name)
+  state.demoMode = false
+  state.room = room
+  state.code = room.code
+  state.view = room.status === 'waiting' ? 'lobby' : 'game'
+  setRoomUrl(room.code)
+  saveState()
+  subscribeRoom()
+  render()
+  toast(room.status === 'waiting' ? '대기방에 다시 참가했어요.' : '진행 중인 게임에 다시 연결했어요.')
+}
 async function createRoom(form) {
   const data = new FormData(form), playerName = String(data.get('name') || '').trim(), roomName = String(data.get('roomName') || '').trim(), maxPlayers = Number(data.get('maxPlayers')), teamCount = Number(data.get('teamCount')), visibility = String(data.get('visibility')), password = String(data.get('password') || '')
   if (!playerName || !roomName) return toast('이름과 방 이름을 입력해 주세요.')
@@ -552,9 +566,11 @@ async function joinRoom(code) {
   if (!room && demoRoom) room = { ...newRoom({ name: demoRoom.name, playerName: '방장', maxPlayers: demoRoom.maxPlayers, visibility: 'public', password: '' }), code, players: Array.from({ length: demoRoom.players }, (_, index) => ({ id: index === 0 ? uid('host') : uid('player'), name: DEFAULT_NAMES[index], team: index % 2, isHost: index === 0, hand: [] })) }
   if (!room) return toast('방을 찾을 수 없어요. 초대 코드를 확인해 주세요.')
   if (room.visibility === 'private') { const password = window.prompt('비공개 방 비밀번호를 입력해 주세요.') || ''; if (password !== room.password) return toast('비밀번호가 맞지 않아요.') }
-  if (room.status !== 'waiting') return toast('이미 시작한 게임이라 지금은 참가할 수 없어요.')
-  if (room.players.length >= room.maxPlayers) return toast('방 인원이 가득 찼어요.')
   const name = getName() === '플레이어' ? (window.prompt('플레이어 이름을 입력해 주세요.') || '플레이어') : getName()
+  const existingPlayer = room.players.find(player => player.id === state.currentPlayerId || (name && name !== '플레이어' && player.name === name))
+  if (existingPlayer) return rejoinExistingPlayer(room, existingPlayer)
+  if (room.status !== 'waiting') return toast('이미 시작한 게임이라 새 플레이어로는 참가할 수 없어요. 기존 참가자 이름으로 다시 들어오세요.')
+  if (room.players.length >= room.maxPlayers) return toast('방 인원이 가득 찼어요.')
   if (room.players.some(player => player.name === name)) return toast('이 방에서 이미 사용 중인 이름이에요.')
   setName(name)
   if (window.SequenceDB && !demoRoom) {
