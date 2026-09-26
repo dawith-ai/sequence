@@ -2,7 +2,11 @@
   const apiBase = 'https://sequence-arena.myjun090.workers.dev/api/sequence'
   const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
   async function request(path, options = {}, attempt = 0) {
-    const response = await fetch(`${apiBase}${path}`, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } })
+    const response = await fetch(`${apiBase}${path}`, {
+      ...options,
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+    })
     if ((response.status === 429 || response.status >= 500) && attempt < 3) { await sleep(400 * (attempt + 1)); return request(path, options, attempt + 1) }
     const body = await response.json().catch(() => ({}))
     if (!response.ok) { const error = new Error(body.error || `Sequence API ${response.status}`); error.code = body.code || `http-${response.status}`; error.version = body.version; throw error }
@@ -26,7 +30,7 @@
         const poll = async () => {
           if (!active) return
           try { const record = await request(`/rooms/${encodeURIComponent(code)}`); const next = JSON.stringify(record.room); if (next !== last) { last = next; callback(snapshot(code, record)) } } catch (error) { if (error.code !== 'http-404') onError?.(error) }
-          if (active) setTimeout(poll, 1500)
+          if (active) setTimeout(poll, 400)
         }
         poll(); return () => { active = false }
       }
@@ -48,7 +52,7 @@
             const body = await request(`/rooms?${params}`); const rooms = body.rooms || []; const next = JSON.stringify(rooms)
             if (next !== last) { last = next; callback({ docs: rooms.map(room => snapshot(room.code, { room })) }) }
           } catch (error) { onError?.(error) }
-          if (active) setTimeout(poll, 2500)
+          if (active) setTimeout(poll, 1000)
         }
         poll(); return () => { active = false }
       }

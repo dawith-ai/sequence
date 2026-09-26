@@ -1,5 +1,12 @@
 function corsHeaders() {
-  return { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS', 'Content-Type': 'application/json; charset=utf-8' }
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'content-type',
+    'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    Pragma: 'no-cache',
+    'Content-Type': 'application/json; charset=utf-8',
+  }
 }
 function json(data, status = 200, extra = {}) { return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders(), ...extra } }) }
 async function readRecord(env, code) {
