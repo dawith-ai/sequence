@@ -33,6 +33,7 @@ let roomReconnectDelay = 1000
 let publicRoomsReconnectDelay = 1000
 let inviteJoinStarted = false
 let roomMigrationInFlight = false
+let demoBotTimer = 0
 
 function uid(prefix = 'id') { return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}` }
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]) }
@@ -205,6 +206,7 @@ function subscribePublicRooms() {
   }, error => { console.warn('Sequence public rooms unavailable', error); publicRoomsUnsubscribe = null; schedulePublicRoomsReconnect() })
 }
 function clearRoomSubscription() {
+  clearDemoBotTimer()
   if (remoteUnsubscribe) remoteUnsubscribe()
   if (roomReconnectTimer) clearTimeout(roomReconnectTimer)
   roomReconnectTimer = 0
@@ -327,8 +329,8 @@ function newRoom({ name, playerName, maxPlayers, visibility, password, turnLimit
 }
 function seedDemoRoom({ start = true } = {}) {
   const room = newRoom({ name: '시퀀스 체험 테이블', playerName: getName(), maxPlayers: 4, visibility: 'public', password: '' })
-  room.players = DEFAULT_NAMES.slice(0, 4).map((name, index) => ({ id: index === 0 ? state.currentPlayerId : uid('bot'), name, team: index % 2, isHost: index === 0, hand: [] }))
-  if (start) { room.turnStarter = 0; room.turnRevealed = true; startGame(room) }
+  room.players = DEFAULT_NAMES.slice(0, 4).map((name, index) => ({ id: index === 0 ? state.currentPlayerId : uid('bot'), name, team: index % 2, isHost: index === 0, isBot: index !== 0, hand: [] }))
+  if (start) { room.turnStarter = Math.floor(Math.random() * room.players.length); room.turnRevealed = true; startGame(room) }
   return room
 }
 function startGame(room) {
@@ -355,7 +357,7 @@ function startGame(room) {
 function currentPlayer(room = state.room) { return room?.players?.[room.currentPlayerIndex] }
 function me(room = state.room) { return room?.players?.find(player => player.id === state.currentPlayerId) || null }
 function isMyTurn(room = state.room) { return room?.status === 'playing' && currentPlayer(room)?.id === state.currentPlayerId }
-function currentTeam(room = state.room) { return me(room)?.team ?? 0 }
+function currentTeam(room = state.room, actor = me(room)) { return actor?.team ?? 0 }
 function calculateTurnSeconds(room) { return Math.max(0, turnLimitFor(room) - Math.floor((Date.now() - (room.turnStartedAt || Date.now())) / 1000)) }
 function drawCard(room) {
   if (!room.deck?.length && room.discard?.length) {
@@ -369,14 +371,14 @@ function removeOneCard(hand, card) {
   if (index >= 0) hand.splice(index, 1)
   return hand
 }
-function legalCells(room, card) {
+function legalCells(room, card, actor = me(room)) {
   if (!card) return []
   const oneEyeJack = isOneEyeJack(card)
   const twoEyeJack = isTwoEyeJack(card)
   if (card === 'FREE') return []
   return room.board.map((cell, index) => {
     if (cell.card === 'FREE') return -1
-    if (oneEyeJack) return cell.team !== null && cell.team !== currentTeam(room) && !cell.sequence ? index : -1
+    if (oneEyeJack) return cell.team !== null && cell.team !== currentTeam(room, actor) && !cell.sequence ? index : -1
     if (twoEyeJack) return cell.team === null ? index : -1
     return cell.card === card && cell.team === null ? index : -1
   }).filter(index => index >= 0)
@@ -387,8 +389,7 @@ function activeTargets(room) {
   const player = me(room)
   return new Set(player?.selectedCard ? legalCells(room, player.selectedCard) : [])
 }
-function detectSequences(room, placedIndex) {
-  const team = currentTeam(room)
+function detectSequences(room, placedIndex, team = currentTeam(room)) {
   const row = Math.floor(placedIndex / 10), col = placedIndex % 10
   const directions = [[0, 1], [1, 0], [1, 1], [1, -1]]
   const found = []
@@ -410,13 +411,13 @@ function detectSequences(room, placedIndex) {
   }
   return found
 }
-function finishMove(room, card, cellIndex) {
-  const player = me(room)
+function finishMove(room, card, cellIndex, actor = me(room)) {
+  const player = actor
   const cell = room.board[cellIndex]
   const oneEyeJack = isOneEyeJack(card)
   if (oneEyeJack) cell.team = null
   else cell.team = player.team
-  const moveSequences = oneEyeJack ? [] : detectSequences(room, cellIndex)
+  const moveSequences = oneEyeJack ? [] : detectSequences(room, cellIndex, player.team)
   moveSequences.forEach(sequence => { sequence.forEach(index => { room.board[index].sequence = player.team }); room.sequences.push({ team: player.team, cells: sequence }) })
   room.lastMove = { card, cellIndex, at: Date.now(), team: player.team, sequence: moveSequences[0] || null }
   room.moveHistory = [...(room.moveHistory || []), { playerId: player.id, playerName: player.name, card, cellIndex, at: room.lastMove.at, team: player.team }].slice(-12)
@@ -432,12 +433,61 @@ function finishMove(room, card, cellIndex) {
   room.turnStartedAt = Date.now()
   room.players.forEach(item => { delete item.selectedCard; delete item.deadSwapUsed })
 }
-function cycleTurn(room) {
+function cycleTurn(room, notify = true) {
   room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length
   room.turnSeconds = turnLimitFor(room)
   room.turnStartedAt = Date.now()
   room.players.forEach(item => { delete item.selectedCard; delete item.deadSwapUsed })
-  toast('시간이 끝나 다음 차례로 넘어갔어요.')
+  if (notify) toast('시간이 끝나 다음 차례로 넘어갔어요.')
+}
+
+function clearDemoBotTimer() {
+  if (demoBotTimer) clearTimeout(demoBotTimer)
+  demoBotTimer = 0
+}
+
+function chooseDemoBotMove(room, bot) {
+  const moves = []
+  for (const card of bot.hand || []) {
+    legalCells(room, card, bot).forEach(cellIndex => moves.push({ card, cellIndex }))
+  }
+  return moves.length ? moves[Math.floor(Math.random() * moves.length)] : null
+}
+
+function playDemoBotTurn() {
+  demoBotTimer = 0
+  const room = state.room
+  if (!state.demoMode || !room || room.status !== 'playing') return
+  const bot = currentPlayer(room)
+  if (!bot?.isBot) return
+
+  const move = chooseDemoBotMove(room, bot)
+  if (move) {
+    finishMove(room, move.card, move.cellIndex, bot)
+    if (state.soundOn) playPlaceSound()
+  } else {
+    const deadCard = (bot.hand || []).find(card => legalCells(room, card, bot).length === 0)
+    if (deadCard) {
+      removeOneCard(bot.hand, deadCard)
+      room.discard.push(deadCard)
+      const replacement = drawCard(room)
+      if (replacement) bot.hand.push(replacement)
+    }
+    if (room.status === 'playing') cycleTurn(room, false)
+  }
+
+  saveState()
+  render()
+  if (room.lastMove?.playerId === bot.id && room.lastMove.sequence) toast(`${bot.name}님이 시퀀스를 완성했어요.`)
+  scheduleDemoBotTurn()
+}
+
+function scheduleDemoBotTurn() {
+  clearDemoBotTimer()
+  const room = state.room
+  if (!state.demoMode || !room || room.status !== 'playing' || !currentPlayer(room)?.isBot) return
+  const delay = room.lastMove?.sequence ? 1800 : 700 + Math.floor(Math.random() * 500)
+  demoBotTimer = setTimeout(playDemoBotTurn, delay)
 }
 async function advanceTurnIfExpired() {
   const room = state.room
@@ -491,7 +541,7 @@ function lobbyPage() {
   return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b></div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>${startHint}</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''}">${revealMarkup}</div><div class="rule-facts"><span><b>${room.teamCount}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>${turnLimitFor(room)}초</b> 턴 타이머</span></div>${isHost ? `<button class="start-button" data-action="start-game" ${validStart ? '' : 'disabled'}>카드 나누고 시작하기 <span>→</span></button>` : '<div class="host-wait">방장이 카드를 나누면 랜덤으로 첫 차례가 정해지고 게임이 시작돼요.</div>'}</div></section></main></div>`
 }
 function playerPanel(room) {
-  return `<aside class="side-panel players-panel"><div class="side-heading"><span>플레이어</span><span class="side-heading-count">${room.players.length}명</span></div>${room.players.map(player => `<div class="player-card ${player.id === state.currentPlayerId ? 'is-me' : ''} ${player.id === currentPlayer(room)?.id ? 'active-turn' : ''}"><span class="player-token" style="--token:${TEAM_COLORS[player.team]}">${escapeHtml(player.name.slice(0, 1))}</span><span class="player-details"><strong>${escapeHtml(player.name)}${player.id === state.currentPlayerId ? ' <em>나</em>' : ''}</strong><small>${TEAM_NAMES[player.team]} 팀 · ${player.hand?.length || 0}장</small></span>${player.id === currentPlayer(room)?.id ? '<i class="player-light"></i>' : ''}</div>`).join('')}<div class="team-scoreboard"><div class="side-heading"><span>시퀀스</span><span class="side-heading-count">${room.teamCount === 2 ? '2개면 승리' : '1개면 승리'}</span></div>${Array.from({ length: room.teamCount }, (_, team) => `<div class="score-row"><i style="background:${TEAM_COLORS[team]}"></i><span>${TEAM_NAMES[team]}</span><strong>${room.sequences.filter(sequence => sequence.team === team).length}</strong></div>`).join('')}</div><div class="rules-mini">♧　완성된 시퀀스의 칩은 제거할 수 없어요.</div></aside>`
+  return `<aside class="side-panel players-panel"><div class="side-heading"><span>플레이어</span><span class="side-heading-count">${room.players.length}명</span></div>${room.players.map(player => `<div class="player-card ${player.id === state.currentPlayerId ? 'is-me' : ''} ${player.id === currentPlayer(room)?.id ? 'active-turn' : ''}"><span class="player-token" style="--token:${TEAM_COLORS[player.team]}">${escapeHtml(player.name.slice(0, 1))}</span><span class="player-details"><strong>${escapeHtml(player.name)}${player.id === state.currentPlayerId ? ' <em>나</em>' : ''}${player.isBot ? ' <em>AI</em>' : ''}</strong><small>${TEAM_NAMES[player.team]} 팀 · ${player.hand?.length || 0}장</small></span>${player.id === currentPlayer(room)?.id ? '<i class="player-light"></i>' : ''}</div>`).join('')}<div class="team-scoreboard"><div class="side-heading"><span>시퀀스</span><span class="side-heading-count">${room.teamCount === 2 ? '2개면 승리' : '1개면 승리'}</span></div>${Array.from({ length: room.teamCount }, (_, team) => `<div class="score-row"><i style="background:${TEAM_COLORS[team]}"></i><span>${TEAM_NAMES[team]}</span><strong>${room.sequences.filter(sequence => sequence.team === team).length}</strong></div>`).join('')}</div><div class="rules-mini">♧　완성된 시퀀스의 칩은 제거할 수 없어요.</div></aside>`
 }
 function boardCellMarkup(room, cell, index) {
   const targets = activeTargets(room)
@@ -663,7 +713,7 @@ async function beginGame() {
     startGame(state.room)
     persistRoom()
   }
-  state.view = 'game'; saveState(); render(); if (state.soundOn) { playShuffleSound(); startAudio() } toast('카드를 나눴어요. 게임 시작!')
+  state.view = 'game'; saveState(); render(); if (state.soundOn) { playShuffleSound(); startAudio() } toast('카드를 나눴어요. 게임 시작!'); scheduleDemoBotTurn()
 }
 function handleCard(card) {
   const room = state.room, player = me(room)
@@ -721,6 +771,7 @@ async function handleCell(index) {
   state.movePending = false
   saveState(); render()
   if (state.room.lastMove?.sequence) toast('시퀀스 완성! 다섯 칸이 빛나요 ✦')
+  scheduleDemoBotTurn()
 }
 async function exchangeDeadCard() {
   const room = state.room, player = me(room)
@@ -752,7 +803,7 @@ async function exchangeDeadCard() {
   } else {
     removeOneCard(player.hand, old); room.discard.push(old); const replacement = drawCard(room); if (replacement) player.hand.push(replacement); player.deadSwapUsed = true; delete player.selectedCard; cycleTurn(room); persistRoom()
   }
-  saveState(); render(); toast('카드를 교환하고 차례를 넘겼어요.')
+  saveState(); render(); toast('카드를 교환하고 차례를 넘겼어요.'); scheduleDemoBotTurn()
 }
 function getAudioContext() {
   if (audio?.ctx) return audio.ctx
