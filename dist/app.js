@@ -527,13 +527,27 @@ async function beginGame() {
   if (!state.room || !me(state.room)?.isHost) return toast('방장만 게임을 시작할 수 있어요.')
   if (state.room.players.length < 2) return toast('게임을 시작하려면 플레이어가 2명 이상 필요해요.')
   if (turnRevealAnimating) return
-  await revealTurn()
-  if (!state.room?.turnRevealed) return toast('첫 차례를 정하지 못해 게임을 시작할 수 없어요.')
+  turnRevealAnimating = true
+  turnRevealPreview = 0
+  render()
+  await new Promise(resolve => {
+    let ticks = 0
+    const roulette = setInterval(() => {
+      if (!state.room?.players?.length) { clearInterval(roulette); resolve(); return }
+      turnRevealPreview = (turnRevealPreview + 1) % state.room.players.length
+      render()
+      ticks += 1
+      if (ticks >= 10) { clearInterval(roulette); resolve() }
+    }, 70)
+  })
+  turnRevealAnimating = false
   if (window.SequenceDB && !state.demoMode) {
     try {
       const updated = await transactRoom(remote => {
         const host = remote.players?.find(player => player.id === state.currentPlayerId)
-        if (!host?.isHost || remote.status !== 'waiting' || remote.players.length < 2 || !remote.turnRevealed) return false
+        if (!host?.isHost || remote.status !== 'waiting' || remote.players.length < 2) return false
+        remote.turnStarter = Math.floor(Math.random() * remote.players.length)
+        remote.turnRevealed = true
         startGame(remote)
       })
       if (!updated) return toast('방 상태가 바뀌어 게임을 시작하지 못했어요.')
@@ -543,7 +557,10 @@ async function beginGame() {
       return toast('게임 시작을 저장하지 못했어요. 연결을 확인해 주세요.')
     }
   } else {
-      startGame(state.room); persistRoom()
+    state.room.turnStarter = Math.floor(Math.random() * state.room.players.length)
+    state.room.turnRevealed = true
+    startGame(state.room)
+    persistRoom()
   }
   state.view = 'game'; saveState(); render(); if (state.soundOn) { playShuffleSound(); startAudio() } toast('카드를 나눴어요. 게임 시작!')
 }
