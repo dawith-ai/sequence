@@ -247,10 +247,14 @@ function isOneEyeJack(card) { return cardRank(card) === 'J' && ['H', 'S'].includ
 function isTwoEyeJack(card) { return cardRank(card) === 'J' && ['D', 'C'].includes(suitOf(card)) }
 function jackPortraitSvg(card) {
   const front = isTwoEyeJack(card)
-  const accent = front ? '#2679ed' : '#c73449'
-  const hair = front ? '#1e315c' : '#5c3027'
-  const face = front ? `<path d="M29 42c0-16 7-25 16-25s16 9 16 25v14c0 13-7 23-16 23S29 69 29 56z" fill="#f1bd8f"/><path d="M33 43c1-13 5-21 12-21s11 8 12 21c-5-5-16-7-24 0z" fill="${hair}"/><path d="M37 48h5M49 48h5" stroke="#24334a" stroke-width="3" stroke-linecap="round"/><circle cx="40" cy="48" r="1.7" fill="#24334a"/><circle cx="52" cy="48" r="1.7" fill="#24334a"/><path d="M44 51l-2 8 4 1M39 65c4 3 8 3 12 0" fill="none" stroke="#a65b56" stroke-width="1.8" stroke-linecap="round"/><path d="M24 105c2-19 11-29 21-29s19 10 21 29" fill="${accent}"/><path d="M39 79l6 9 6-9" fill="#fff4dc"/>` : `<path d="M35 42c0-15 7-24 16-24 9 0 16 8 16 22 0 5-2 8-5 10-1 14-8 24-17 24-8 0-14-9-14-22z" fill="#efbd8c"/><path d="M31 48c-3-16 4-31 20-31 11 0 18 8 18 20-8-5-13-12-14-19-4 9-12 16-24 19z" fill="${hair}"/><path d="M49 48h7" stroke="#24334a" stroke-width="3" stroke-linecap="round"/><circle cx="53" cy="48" r="1.8" fill="#24334a"/><path d="M60 51l8 5-8 4M50 65c4 2 8 1 10-2" fill="none" stroke="#a65b56" stroke-width="1.8" stroke-linecap="round"/><path d="M27 105c3-19 13-29 25-29 10 0 18 10 20 29" fill="${accent}"/><path d="M45 80l8 8 7-9" fill="#fff4dc"/>`
-  return `<svg class="jack-illustration ${front ? 'front-facing' : 'profile-facing'}" viewBox="0 0 90 110" role="img" aria-label="${front ? '두 눈 잭 정면 인물' : '한 눈 잭 옆얼굴 인물'}"><defs><linearGradient id="jack-bg-${front ? 'front' : 'profile'}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${front ? '#d9efff' : '#ffe0d7'}"/><stop offset="1" stop-color="${front ? '#8db9ea' : '#e79a8f'}"/></linearGradient></defs><rect x="2" y="2" width="86" height="106" rx="13" fill="url(#jack-bg-${front ? 'front' : 'profile'})"/><path d="M21 20l7-12 8 7 9-13 9 13 9-7 7 12" fill="#d8b86c" stroke="#8b6829" stroke-width="2" stroke-linejoin="round"/>${face}</svg>`
+  const accent = front ? '#287fe2' : '#c84055'
+  const dark = front ? '#173d78' : '#6a2735'
+  const bg = front ? ['#e7f5ff', '#9ac9f2'] : ['#fff0e7', '#e8a39a']
+  const portrait = front
+    ? `<path d="M27 51c0-19 8-30 18-30s18 11 18 30v13c0 15-8 25-18 25S27 79 27 64z" fill="#efbd8e"/><path d="M28 51c-2-19 6-34 19-34 13 0 20 11 18 29-5-5-10-11-12-20-5 10-13 17-25 25z" fill="${dark}"/><path d="M35 54h8M48 54h8" stroke="#1a2d46" stroke-width="3" stroke-linecap="round"/><circle cx="40" cy="54" r="2" fill="#1a2d46"/><circle cx="52" cy="54" r="2" fill="#1a2d46"/><path d="M43 59l-2 7 4 1M37 73c5 4 11 4 16 0" fill="none" stroke="#a45c55" stroke-width="2" stroke-linecap="round"/><path d="M18 111c3-22 13-32 27-32s24 10 27 32" fill="${accent}"/><path d="M36 82l9 11 9-11" fill="#fff7e7"/>`
+    : `<path d="M34 50c-1-17 6-29 17-29 11 0 18 9 17 24 0 6-2 10-6 13-1 14-8 24-18 24-9 0-15-10-15-24z" fill="#efbc8b"/><path d="M31 51c-4-18 4-35 21-35 12 0 20 9 19 23-7-4-13-12-14-21-5 11-13 19-26 23z" fill="${dark}"/><path d="M51 53h9" stroke="#1a2d46" stroke-width="3" stroke-linecap="round"/><circle cx="56" cy="53" r="2" fill="#1a2d46"/><path d="M63 57l9 6-9 6M51 73c5 3 10 2 13-2" fill="none" stroke="#a45c55" stroke-width="2" stroke-linecap="round"/><path d="M24 111c4-22 14-32 27-32s23 10 26 32" fill="${accent}"/><path d="M43 83l9 10 9-11" fill="#fff7e7"/>`
+  const label = front ? 'WILD' : 'REMOVE'
+  return `<svg class="jack-illustration ${front ? 'front-facing' : 'profile-facing'}" viewBox="0 0 90 118" role="img" aria-label="${front ? '두 눈 잭 정면 인물, 자유 배치' : '한 눈 잭 옆얼굴 인물, 칩 제거'}"><defs><linearGradient id="jack-bg-${front ? 'front' : 'profile'}" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${bg[0]}"/><stop offset="1" stop-color="${bg[1]}"/></linearGradient></defs><rect x="2" y="2" width="86" height="114" rx="14" fill="url(#jack-bg-${front ? 'front' : 'profile'})"/><rect x="7" y="7" width="76" height="104" rx="10" fill="none" stroke="${accent}" stroke-width="1.5" opacity=".72"/><path d="M23 24l7-13 8 8 7-14 8 14 8-8 7 13" fill="#e5c16b" stroke="#87682d" stroke-width="2" stroke-linejoin="round"/>${portrait}<path d="M13 101h64" stroke="${accent}" stroke-width="2" opacity=".45"/><text x="45" y="108" text-anchor="middle" fill="${dark}" font-family="Arial,sans-serif" font-size="7" font-weight="900" letter-spacing="1.5">${label}</text></svg>`
 }
 function cardMarkup(card, options = {}) {
   const selected = options.selected ? ' card-selected' : ''
@@ -260,7 +264,8 @@ function cardMarkup(card, options = {}) {
   const jack = cardRank(card) === 'J'
   const jackType = isTwoEyeJack(card) ? 'wild' : 'remove'
   const jackVisual = `<span class="jack-portrait ${jackType}">${jackPortraitSvg(card)}</span>`
-  return `<button class="playing-card${isRed(card) ? ' red-suit' : ''}${selected}${last}${disabled}" data-card="${escapeHtml(card)}" aria-label="${escapeHtml(cardLabel(card))}"><span class="card-corner">${escapeHtml(cardRank(card))}<i>${SUITS[suitOf(card)] || ''}</i></span><span class="card-center">${jack ? `${jackVisual}<small>${isTwoEyeJack(card) ? '두 눈 · 자유 배치' : '한 눈 · 칩 제거'}</small>` : (SUITS[suitOf(card)] || '')}</span>${dead}</button>`
+  const jackAction = isTwoEyeJack(card) ? '<small class="jack-action-label"><b>자유 배치</b><span>빈 칸</span></small>' : '<small class="jack-action-label"><b>칩 제거</b><span>상대 칩</span></small>'
+  return `<button class="playing-card${isRed(card) ? ' red-suit' : ''}${selected}${last}${disabled}" data-card="${escapeHtml(card)}" aria-label="${escapeHtml(cardLabel(card))}"><span class="card-corner">${escapeHtml(cardRank(card))}<i>${SUITS[suitOf(card)] || ''}</i></span><span class="card-center">${jack ? `${jackVisual}${jackAction}` : (SUITS[suitOf(card)] || '')}</span>${dead}</button>`
 }
 const BOARD_LAYOUT = [
   ['FREE', '10S', 'QS', 'KS', 'AS', '2D', '3D', '4D', '5D', 'FREE'],
@@ -594,8 +599,9 @@ function boardCellMarkup(room, cell, index) {
   const isTarget = targets.has(index)
   const last = room.lastMove?.cellIndex === index
   const seq = room.sequences.some(sequence => sequence.cells.includes(index))
-  const value = cell.card === 'FREE' ? '<span class="free-star">✦</span>' : `<span class="cell-rank ${isRed(cell.card) ? 'red-suit' : ''}">${escapeHtml(cardRank(cell.card))}</span><span class="cell-suit ${isRed(cell.card) ? 'red-suit' : ''}">${SUITS[suitOf(cell.card)]}</span>`
-  return `<button class="board-cell ${cell.card === 'FREE' ? 'free-cell' : ''} ${isTarget ? 'target-cell' : ''} ${cell.team !== null ? 'occupied' : ''} ${seq ? 'sequence-mark' : ''} ${last ? 'last-move' : ''}" data-cell-index="${index}" style="${cell.team !== null ? `--chip-color:${TEAM_COLORS[cell.team]};` : ''}" ${isTarget && isMyTurn(room) ? '' : 'disabled'} aria-label="${escapeHtml(cell.card === 'FREE' ? '무료 모서리' : cardLabel(cell.card))}">${value}${cell.team !== null ? `<span class="chip-marker">${cell.sequence ? (cell.team === 0 ? 'S' : '✦') : (cell.team === 0 ? '●' : cell.team === 1 ? '◆' : '✦')}</span>` : ''}${last ? '<span class="last-ring"></span>' : ''}</button>`
+  const value = cell.card === 'FREE' ? '<span class="free-star">✦</span>' : `<span class="cell-card-info"><b class="cell-rank ${isRed(cell.card) ? 'red-suit' : ''}">${escapeHtml(cardRank(cell.card))}</b><i class="cell-suit ${isRed(cell.card) ? 'red-suit' : ''}">${SUITS[suitOf(cell.card)]}</i></span>`
+  const chip = cell.team !== null ? `<span class="chip-marker" aria-label="${escapeHtml(`${TEAM_NAMES[cell.team]} 팀 칩`) }">${cell.sequence ? (cell.team === 0 ? 'S' : '✦') : (cell.team === 0 ? '●' : cell.team === 1 ? '◆' : '✦')}</span>` : ''
+  return `<button class="board-cell ${cell.card === 'FREE' ? 'free-cell' : ''} ${isTarget ? 'target-cell' : ''} ${cell.team !== null ? 'occupied' : ''} ${seq ? 'sequence-mark' : ''} ${last ? 'last-move' : ''}" data-cell-index="${index}" style="${cell.team !== null ? `--chip-color:${TEAM_COLORS[cell.team]};` : ''}" ${isTarget && isMyTurn(room) ? '' : 'disabled'} aria-label="${escapeHtml(cell.card === 'FREE' ? '무료 모서리' : cardLabel(cell.card))}">${value}${chip}${last ? '<span class="last-ring"></span>' : ''}</button>`
 }
 function gamePage() {
   const room = state.room
@@ -610,7 +616,20 @@ function gamePage() {
 }
 function rulesPage() { return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main rules-page"><button class="back-link" data-action="home">← 홈으로</button><div class="eyebrow"><span></span> HOW TO PLAY</div><h1>시퀀스는 이렇게 플레이해요.</h1><div class="rules-grid"><div class="panel rule-card"><span class="rule-number">01</span><h2>카드를 고르고</h2><p>내 손의 카드와 같은 칸에 칩을 놓아요. 한 눈 잭(♥·♠)은 상대 칩을 치우고, 두 눈 잭(♦·♣)은 빈 칸 어디든 놓을 수 있어요.</p></div><div class="panel rule-card"><span class="rule-number">02</span><h2>다섯 칸을 잇고</h2><p>가로, 세로, 대각선으로 칩 다섯 개를 한 줄로 연결하면 시퀀스가 완성돼요. 모서리는 모두의 무료 칸입니다.</p></div><div class="panel rule-card"><span class="rule-number">03</span><h2>먼저 승리하세요</h2><p>2팀 대전은 두 줄, 그 외의 대전은 한 줄을 먼저 완성하면 승리합니다. 3명, 5명처럼 홀수도 각자 팀으로 즐길 수 있어요.</p></div></div></main></div>` }
 function localizeMarkup(markup) {
-  return markup.replaceAll('OPEN TABLES', '공개 테이블').replaceAll('WAITING ROOM', '대기실').replaceAll('STARTING ORDER', '시작 순서').replaceAll('YOUR HAND', '내 손패').replaceAll('HOW TO PLAY', '플레이 방법').replaceAll('SEQUENCE COMPLETE', '시퀀스 완성').replaceAll('TABLE ·', '테이블 ·').replaceAll('TABLE ', '테이블 ').replaceAll('● LIVE', '● 실시간').replaceAll('♫ 사운드 ON', '♫ 사운드 켜짐').replaceAll('♫ ON', '♫ 켜짐').replaceAll('♫ BGM', '♫ 배경음')
+  return markup
+    .replaceAll('OPEN TABLES', '공개 테이블')
+    .replaceAll('WAITING ROOM', '대기실')
+    .replaceAll('STARTING ORDER', '시작 순서')
+    .replaceAll('YOUR HAND', '내 손패')
+    .replaceAll('HOW TO PLAY', '플레이 방법')
+    .replaceAll('SEQUENCE COMPLETE', '시퀀스 완성')
+    .replaceAll('TABLE ·', '테이블 ·')
+    .replaceAll('TABLE ', '테이블 ')
+    .replaceAll('● LIVE', '● 실시간')
+    .replaceAll('♫ 사운드 ON', '♫ 사운드 켜짐')
+    .replaceAll('♫ ON', '♫ 켜짐')
+    .replaceAll('♫ BGM', '♫ 배경음')
+    .replaceAll('⌘　한쪽 눈 잭은 상대 칩을 제거하고, 양쪽 눈 잭은 자유 배치해요.', '<span class="rules-strip-title">잭 카드 사용법</span><p><b>한 눈 잭</b><span>상대 칩을 제거해요.</span></p><p><b>두 눈 잭</b><span>빈 칸 어디든 놓을 수 있어요.</span></p>')
 }
 function updateTimerUi() {
   const room = state.room

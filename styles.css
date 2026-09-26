@@ -187,6 +187,38 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .add-ai-button:hover { color: #fff; background: #2b805d; }
 .add-ai-button:disabled { cursor: not-allowed; opacity: .45; }
 
+/* Keep the printed card identity visible above every team chip. */
+.cell-card-info { position: absolute; z-index: 2; top: 8%; left: 7%; right: 7%; display: flex; align-items: baseline; justify-content: center; gap: 3px; color: #1a312b; line-height: 1; }
+.cell-card-info .cell-rank { position: static; width: auto; font-size: clamp(11px, 1.55vw, 20px); }
+.cell-card-info .cell-suit { margin: 0; font-size: clamp(10px, 1.4vw, 18px); }
+.board-cell.occupied .chip-marker { z-index: 1; inset: 39% 14% 7%; font-size: clamp(10px, 1.35vw, 18px); }
+.board-cell.occupied .last-ring { z-index: 3; }
+
+/* Court-card art: a restrained illustrated badge with a clear action label. */
+.playing-card .jack-portrait { width: 47px; height: 60px; border: 1px solid rgba(36,49,43,.18); border-radius: 8px; box-shadow: 0 3px 6px rgba(30,31,25,.2), inset 0 0 0 1px rgba(255,255,255,.65); }
+.playing-card .jack-illustration { width: 100%; height: 100%; }
+.playing-card .jack-portrait + small { display: block; max-width: 78px; margin-top: 1px; color: #526d61; font-size: 7px; font-weight: 900; letter-spacing: .02em; line-height: 1.25; }
+.playing-card .jack-action-label { display: grid; gap: 1px; max-width: 78px; margin-top: 1px; color: #527064; font-size: 7px; font-weight: 700; line-height: 1.15; }
+.playing-card .jack-action-label b { color: #2f624d; font-size: 8px; }
+.playing-card .jack-action-label span { color: #89998c; font-size: 6px; }
+.card-center:has(.jack-portrait) { gap: 1px; font-size: inherit; }
+
+.rules-strip { display: grid; gap: 6px; }
+.rules-strip-title { display: block; color: #426d58; font-size: 10px; font-weight: 900; letter-spacing: .08em; }
+.rules-strip p { display: flex; align-items: baseline; gap: 6px; margin: 0; color: #778479; line-height: 1.45; }
+.rules-strip p b { flex: 0 0 auto; color: #35664f; font-size: 9px; }
+.rules-strip p span { min-width: 0; }
+
+@media (max-width: 820px) {
+  .cell-card-info .cell-rank { font-size: 10px; }
+  .cell-card-info .cell-suit { font-size: 9px; }
+  .board-cell.occupied .chip-marker { inset: 40% 12% 6%; font-size: 9px; }
+  .playing-card .jack-portrait { width: 37px; height: 48px; }
+  .playing-card .jack-action-label { max-width: 58px; font-size: 5px; }
+  .playing-card .jack-action-label b { font-size: 6px; }
+  .playing-card .jack-action-label span { font-size: 5px; }
+}
+
 @media (max-width: 520px) {
   .topbar { padding-inline: 14px; }
   .brand { gap: 8px; font-size: 11px; letter-spacing: .1em; }
