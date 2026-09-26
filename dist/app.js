@@ -28,6 +28,7 @@ let roomReconnectTimer = 0
 let publicRoomsReconnectTimer = 0
 let roomReconnectDelay = 1000
 let publicRoomsReconnectDelay = 1000
+let inviteJoinStarted = false
 
 function uid(prefix = 'id') { return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}` }
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]) }
@@ -188,7 +189,13 @@ async function refreshRemoteRoom() {
     return null
   }
 }
-window.addEventListener('sequence-api-ready', () => { state.connectionStatus = 'connected'; subscribePublicRooms(); subscribeRoom(); render() })
+function joinFromInvite() {
+  const inviteCode = new URLSearchParams(location.search).get('room')
+  if (!inviteCode || state.view !== 'home' || inviteJoinStarted || !window.SequenceDB) return
+  inviteJoinStarted = true
+  joinRoom(inviteCode).catch(error => { inviteJoinStarted = false; console.warn('Sequence invite join unavailable', error) })
+}
+window.addEventListener('sequence-api-ready', () => { state.connectionStatus = 'connected'; subscribePublicRooms(); subscribeRoom(); render(); setTimeout(joinFromInvite, 0) })
 function getRoom(code) {
   try { return JSON.parse(localStorage.getItem(`sequence-room-${code}`) || 'null') } catch { return null }
 }
@@ -799,5 +806,4 @@ function wire() {
 if (state.room?.code) { restorePlayerIdentity(state.room); setRoomUrl(state.room.code) }
 if (state.room?.status === 'playing') state.view = 'game'
 render()
-const inviteCode = new URLSearchParams(location.search).get('room')
-if (inviteCode && state.view === 'home') setTimeout(() => joinRoom(inviteCode), 700)
+setTimeout(joinFromInvite, 700)
