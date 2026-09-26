@@ -191,7 +191,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .cell-card-info { position: absolute; z-index: 2; top: 8%; left: 7%; right: 7%; display: flex; align-items: baseline; justify-content: center; gap: 3px; color: #1a312b; line-height: 1; }
 .cell-card-info .cell-rank { position: static; width: auto; font-size: clamp(11px, 1.55vw, 20px); }
 .cell-card-info .cell-suit { margin: 0; font-size: clamp(10px, 1.4vw, 18px); }
-.board-cell.occupied .chip-marker { z-index: 1; top: 39%; right: auto; bottom: auto; left: 50%; width: 72%; height: auto; aspect-ratio: 1 / 1; transform: translateX(-50%); font-size: clamp(10px, 1.35vw, 18px); }
+.board-cell.occupied .chip-marker { z-index: 1; top: 39%; right: auto; bottom: auto; left: 50%; width: 60%; height: auto; aspect-ratio: 1 / 1; transform: translateX(-50%); font-size: clamp(9px, 1.15vw, 16px); }
 .board-cell.occupied:not(.chip-removal-target) { pointer-events: none; }
 .board-cell.occupied:not(.chip-removal-target):hover { transform: none; filter: none; }
 .board-cell.chip-removal-target .chip-marker { border-color: #ffb5a8; box-shadow: 0 0 0 2px rgba(255,116,94,.72), inset 0 2px 3px rgba(255,255,255,.42), inset 0 -4px 5px rgba(0,0,0,.28), 0 4px 12px rgba(255,93,75,.4); }
@@ -218,7 +218,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .rule-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cell-card-info .cell-rank { font-size: 10px; }
   .cell-card-info .cell-suit { font-size: 9px; }
-  .board-cell.occupied .chip-marker { top: 40%; width: 74%; font-size: 9px; }
+  .board-cell.occupied .chip-marker { top: 39%; width: 60%; font-size: 8px; }
   .playing-card .jack-portrait { width: 37px; height: 48px; }
   .playing-card .jack-action-label { max-width: 58px; font-size: 5px; }
   .playing-card .jack-action-label b { font-size: 6px; }
