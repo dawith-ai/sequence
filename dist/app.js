@@ -19,6 +19,7 @@ let toastTimer = 0
 let timerId = 0
 let turnExpiryInFlight = false
 let audio = null
+let audioUnlockBound = false
 let subscribedRoomCode = ''
 let remoteUnsubscribe = null
 let publicRoomsUnsubscribe = null
@@ -407,7 +408,7 @@ async function createRoom(form) {
   if (visibility === 'private' && password.length < 4) return toast('비공개 방 비밀번호는 4자 이상 입력해 주세요.')
   setName(playerName)
   const room = newRoom({ name: roomName, playerName, maxPlayers, visibility, password })
-  state.room = room; state.code = room.code; state.view = 'lobby'; if (data.get('sound')) state.soundOn = true
+  state.room = room; state.code = room.code; state.view = 'lobby'; if (data.get('sound')) { state.soundOn = true; startAudio() }
   await persistRoom(); saveState(); subscribeRoom(); if (state.soundOn) startAudio(); render(); toast(`방이 만들어졌어요 · ${room.code}`)
 }
 async function joinRoom(code) {
@@ -486,6 +487,7 @@ async function leaveRoom() {
 async function beginGame() {
   if (!state.room || !me(state.room)?.isHost) return toast('방장만 게임을 시작할 수 있어요.')
   if (state.room.players.length < 2) return toast('게임을 시작하려면 플레이어가 2명 이상 필요해요.')
+  if (state.soundOn) startAudio()
   if (window.SequenceDB && !state.demoMode) {
     try {
       const updated = await transactRoom(remote => {
@@ -589,9 +591,21 @@ function getAudioContext() {
     if (!AudioContext) return null
     const ctx = new AudioContext(), master = ctx.createGain()
     master.gain.value = state.volume ?? 0.75; master.connect(ctx.destination)
-    audio = { ctx, master, interval: null }
+    audio = { ctx, master, interval: null, begin: null }
     return ctx
   } catch { return null }
+}
+function bindAudioUnlock() {
+  if (audioUnlockBound) return
+  const unlock = () => {
+    if (!state.soundOn || !audio?.ctx) return
+    const resume = audio.ctx.state === 'running' ? Promise.resolve() : audio.ctx.resume()
+    resume.then(() => audio?.begin?.()).catch(error => console.warn('Sequence audio unlock unavailable', error))
+  }
+  document.addEventListener('pointerdown', unlock, { passive: true })
+  document.addEventListener('touchstart', unlock, { passive: true })
+  document.addEventListener('keydown', unlock, { passive: true })
+  audioUnlockBound = true
 }
 function playShuffleSound() {
   const ctx = getAudioContext()
@@ -607,7 +621,8 @@ function playShuffleSound() {
 }
 function startAudio() {
   const ctx = getAudioContext()
-  if (!ctx || audio.interval) return
+  if (!ctx) return
+  bindAudioUnlock()
   const begin = () => {
     if (!state.soundOn || !audio || audio.interval) return
     const music = ctx.createGain(), filter = ctx.createBiquadFilter()
@@ -630,8 +645,10 @@ function startAudio() {
     }
     playChord(); audio.interval = setInterval(playChord, 6100)
   }
-  if (ctx.state === 'suspended') ctx.resume().then(begin).catch(() => {})
-  else begin()
+  audio.begin = begin
+  if (audio.interval) return
+  if (ctx.state === 'running') begin()
+  else ctx.resume().then(() => { if (ctx.state === 'running') begin() }).catch(error => console.warn('Sequence audio start unavailable', error))
 }
 function setVolume(value) { state.volume = Math.max(0, Math.min(1, Number(value))); if (audio?.master) audio.master.gain.value = state.volume; saveState() }
 function toggleSound() { state.soundOn = !state.soundOn; if (state.soundOn) startAudio(); else if (audio) { clearInterval(audio.interval); audio.ctx.close(); audio = null } saveState(); render(); toast(state.soundOn ? '잔잔한 테이블 BGM을 켰어요.' : 'BGM을 껐어요.') }
