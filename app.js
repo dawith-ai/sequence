@@ -9,7 +9,7 @@ const TEAM_NAMES = ['초록', '파랑', '분홍', '금빛', '보라', '청록', 
 const DEFAULT_NAMES = ['Caroline', 'Theresa', '민준', '서연', '하림', '지호', '다은', '현우', '유나', '도윤', '채원', '준서']
 const VALID_PLAYER_COUNTS = [2, 3, 4, 6, 8, 9, 10, 12]
 const VALID_TEAM_COUNTS = [2, 3]
-const TURN_LIMIT_OPTIONS = [30, 60, 90, 120, 180]
+const TURN_LIMIT_OPTIONS = [20, 30, 60, 90, 120, 180]
 
 const DEMO_ROOMS = [
   { code: 'MOSS88A1', name: '금요일 밤 카드 한 판', players: 4, maxPlayers: 6, visibility: 'public', status: 'waiting' },
