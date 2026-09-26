@@ -180,6 +180,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .board-cell { border-radius: 3px; }
 }
 
+.kick-button { flex: none; padding: 5px 7px; border: 1px solid rgba(185,83,83,.28); border-radius: 4px; color: #a44949; background: rgba(255,239,235,.72); font-size: 9px; font-weight: 800; white-space: nowrap; }
+.kick-button:hover { color: #fff; background: #b95353; }
+.player-card .kick-button { margin-left: auto; }
+.add-ai-button { padding: 6px 8px; border: 1px solid rgba(42,121,80,.32); border-radius: 4px; color: #27694f; background: rgba(232,245,229,.9); font-size: 9px; font-weight: 800; white-space: nowrap; }
+.add-ai-button:hover { color: #fff; background: #2b805d; }
+.add-ai-button:disabled { cursor: not-allowed; opacity: .45; }
+
 @media (max-width: 520px) {
   .topbar { padding-inline: 14px; }
   .brand { gap: 8px; font-size: 11px; letter-spacing: .1em; }
