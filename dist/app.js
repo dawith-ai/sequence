@@ -54,11 +54,23 @@ function toast(message) {
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem('sequence-arena-state') || 'null')
-    return { view: 'home', room: null, code: '', currentPlayerId: getSessionId(), sort: 'number', soundOn: false, volume: 0.75, connectionStatus: 'connecting', demoMode: false, ...saved }
+    return { view: 'home', room: null, code: '', currentPlayerId: getSessionId(), sort: 'number', soundOn: false, volume: 0.75, connectionStatus: 'connecting', demoMode: false, ...saved, currentPlayerId: saved?.currentPlayerId || getSessionId() }
   } catch { return { view: 'home', room: null, code: '', currentPlayerId: getSessionId(), sort: 'number', soundOn: false, volume: 0.75, connectionStatus: 'connecting', demoMode: false } }
 }
 function saveState() {
-  localStorage.setItem('sequence-arena-state', JSON.stringify({ view: state.demoMode ? 'home' : state.view, room: state.demoMode ? null : state.room, code: state.demoMode ? '' : state.code, sort: state.sort, soundOn: state.soundOn, volume: state.volume }))
+  localStorage.setItem('sequence-arena-state', JSON.stringify({ view: state.demoMode ? 'home' : state.view, room: state.demoMode ? null : state.room, code: state.demoMode ? '' : state.code, currentPlayerId: state.currentPlayerId, sort: state.sort, soundOn: state.soundOn, volume: state.volume }))
+}
+function restorePlayerIdentity(room = state.room) {
+  if (!room?.players?.length) return null
+  const current = room.players.find(player => player.id === state.currentPlayerId)
+  if (current) return current
+  const name = getName()
+  const match = name && name !== '플레이어' ? room.players.find(player => player.name === name) : null
+  if (!match) return null
+  state.currentPlayerId = match.id
+  sessionStorage.setItem('sequence-session', match.id)
+  saveState()
+  return match
 }
 function remoteRoomPayload(room) {
   return {
@@ -123,8 +135,9 @@ function subscribeRoom() {
     roomReconnectDelay = 1000
     state.connectionStatus = 'connected'
     if (!snapshot.exists || !state.room || snapshot.id !== state.room.code) return
-    const localPlayer = me(state.room)
     const incoming = snapshot.data()
+    restorePlayerIdentity(incoming)
+    const localPlayer = me(state.room)
     const previousTurnId = currentPlayer(state.room)?.id
     const localPlayerIndex = incoming.players?.findIndex(player => player.id === state.currentPlayerId) ?? -1
     if (localPlayer?.selectedCard && incoming.currentPlayerIndex === localPlayerIndex) {
@@ -256,7 +269,7 @@ function startGame(room) {
   room.lastMove = null
 }
 function currentPlayer(room = state.room) { return room?.players?.[room.currentPlayerIndex] }
-function me(room = state.room) { return room?.players?.find(player => player.id === state.currentPlayerId) || room?.players?.[0] }
+function me(room = state.room) { return room?.players?.find(player => player.id === state.currentPlayerId) || null }
 function isMyTurn(room = state.room) { return room?.status === 'playing' && currentPlayer(room)?.id === state.currentPlayerId }
 function currentTeam(room = state.room) { return me(room)?.team ?? 0 }
 function calculateTurnSeconds(room) { return Math.max(0, 60 - Math.floor((Date.now() - (room.turnStartedAt || Date.now())) / 1000)) }
@@ -783,7 +796,7 @@ function wire() {
   })
 }
 
-if (state.room?.code) setRoomUrl(state.room.code)
+if (state.room?.code) { restorePlayerIdentity(state.room); setRoomUrl(state.room.code) }
 if (state.room?.status === 'playing') state.view = 'game'
 render()
 const inviteCode = new URLSearchParams(location.search).get('room')
