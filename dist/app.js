@@ -119,7 +119,8 @@ function subscribeRoom() {
     const localPlayer = me(state.room)
     const incoming = snapshot.data()
     const previousTurnId = currentPlayer(state.room)?.id
-    if (localPlayer?.selectedCard) {
+    const localPlayerIndex = incoming.players?.findIndex(player => player.id === state.currentPlayerId) ?? -1
+    if (localPlayer?.selectedCard && incoming.currentPlayerIndex === localPlayerIndex) {
       const incomingPlayer = incoming.players?.find(player => player.id === localPlayer.id)
       if (incomingPlayer) incomingPlayer.selectedCard = localPlayer.selectedCard
     }
@@ -167,7 +168,7 @@ async function refreshRemoteRoom() {
     return null
   }
 }
-window.addEventListener('sequence-firebase-ready', () => { state.connectionStatus = 'connected'; subscribePublicRooms(); subscribeRoom(); render() })
+window.addEventListener('sequence-api-ready', () => { state.connectionStatus = 'connected'; subscribePublicRooms(); subscribeRoom(); render() })
 function getRoom(code) {
   try { return JSON.parse(localStorage.getItem(`sequence-room-${code}`) || 'null') } catch { return null }
 }

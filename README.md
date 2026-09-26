@@ -18,12 +18,15 @@
 Cloudflare Worker API가 방 상태를 버전 비교 후 조건부 갱신하며, 브라우저는 방 상태를 약 1.5초 간격으로 폴링해 친구 간 변경을 반영합니다.
 현재 지인 전용 사용을 전제로 방 코드를 공유하는 방식이며, 공개 서비스로 전환할 때는 인증·접근 제어·레이트 리밋을 추가해야 합니다.
 
+운영 프론트는 Cloudflare Pages(`https://sequence-arena.pages.dev`)에서 제공하고, API는 `https://sequence-arena.myjun090.workers.dev/api/sequence`를 사용합니다.
+
 ## 개발 / 배포
 
 ```bash
 npm run check
 npm run build
 wrangler deploy
+wrangler pages deploy dist --project-name sequence-arena
 ```
 
 정적 프론트엔드는 `index.html`, `app.js`, `styles.css`와 `dist/` 산출물로 구성됩니다.

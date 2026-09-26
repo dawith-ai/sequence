@@ -83,6 +83,6 @@
     }
   }
   window.SequenceDB = api
-  window.SequenceFirebaseConfig = { provider: 'cloudflare-d1' }
-  setTimeout(() => window.dispatchEvent(new CustomEvent('sequence-firebase-ready')), 0)
+  window.SequenceCloudflareConfig = { provider: 'cloudflare-workers-d1', apiBase }
+  setTimeout(() => window.dispatchEvent(new CustomEvent('sequence-api-ready')), 0)
 })()
