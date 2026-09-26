@@ -38,6 +38,12 @@ function getSessionId() {
 }
 function getName() { return localStorage.getItem('sequence-name') || '플레이어' }
 function setName(name) { localStorage.setItem('sequence-name', name.trim() || '플레이어') }
+function setRoomUrl(code = '') {
+  const url = new URL(location.href)
+  if (code) url.searchParams.set('room', code)
+  else url.searchParams.delete('room')
+  history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+}
 function formatTime(seconds) { return `${String(Math.max(0, Math.floor(seconds / 60))).padStart(2, '0')}:${String(Math.max(0, seconds % 60)).padStart(2, '0')}` }
 function toast(message) {
   toastEl.textContent = message
@@ -401,14 +407,14 @@ function render() {
   app.innerHTML = localizeMarkup(state.view === 'home' ? homePage() : state.view === 'rooms' ? roomsPage() : state.view === 'lobby' ? lobbyPage() : state.view === 'rules' ? rulesPage() : gamePage())
   wire()
 }
-function enterRoom(room) { state.demoMode = false; state.room = room; state.code = room.code; state.view = room.status === 'playing' ? 'game' : 'lobby'; saveState(); subscribeRoom(); render() }
+function enterRoom(room) { state.demoMode = false; state.room = room; state.code = room.code; state.view = room.status === 'playing' ? 'game' : 'lobby'; setRoomUrl(room.code); saveState(); subscribeRoom(); render() }
 async function createRoom(form) {
   const data = new FormData(form), playerName = String(data.get('name') || '').trim(), roomName = String(data.get('roomName') || '').trim(), maxPlayers = Number(data.get('maxPlayers')), visibility = String(data.get('visibility')), password = String(data.get('password') || '')
   if (!playerName || !roomName) return toast('이름과 방 이름을 입력해 주세요.')
   if (visibility === 'private' && password.length < 4) return toast('비공개 방 비밀번호는 4자 이상 입력해 주세요.')
   setName(playerName)
   const room = newRoom({ name: roomName, playerName, maxPlayers, visibility, password })
-  state.room = room; state.code = room.code; state.view = 'lobby'; if (data.get('sound')) { state.soundOn = true; startAudio() }
+  state.room = room; state.code = room.code; state.view = 'lobby'; setRoomUrl(room.code); if (data.get('sound')) { state.soundOn = true; startAudio() }
   await persistRoom(); saveState(); subscribeRoom(); if (state.soundOn) startAudio(); render(); toast(`방이 만들어졌어요 · ${room.code}`)
 }
 async function joinRoom(code) {
@@ -447,7 +453,7 @@ async function joinRoom(code) {
   } else {
     room.players.push({ id: state.currentPlayerId, name, team: 0, isHost: false, hand: [] }); normalizeTeams(room); await persistRoom()
   }
-  state.room = room; state.code = room.code; state.view = 'lobby'; saveState(); subscribeRoom(); render(); toast('방에 참가했어요.')
+  state.room = room; state.code = room.code; state.view = 'lobby'; setRoomUrl(room.code); saveState(); subscribeRoom(); render(); toast('방에 참가했어요.')
 }
 async function leaveRoom() {
   const room = state.room
@@ -482,7 +488,7 @@ async function leaveRoom() {
     }
   }
   if (room?.code) localStorage.removeItem(`sequence-room-${room.code}`)
-  clearRoomSubscription(); state.demoMode = false; state.view = 'home'; state.room = null; state.code = ''; saveState(); render()
+  clearRoomSubscription(); state.demoMode = false; state.view = 'home'; state.room = null; state.code = ''; setRoomUrl(''); saveState(); render()
 }
 async function beginGame() {
   if (!state.room || !me(state.room)?.isHost) return toast('방장만 게임을 시작할 수 있어요.')
@@ -671,7 +677,9 @@ async function dismissCelebration() {
 }
 function copyInvite() {
   if (!state.room?.code) return
-  const link = `${location.origin}${location.pathname}?room=${encodeURIComponent(state.room.code)}`
+  const url = new URL(location.href)
+  url.searchParams.set('room', state.room.code)
+  const link = url.toString()
   navigator.clipboard?.writeText(link)
   toast('초대 링크를 복사했어요.')
 }
@@ -718,7 +726,7 @@ function wire() {
     const action = element.dataset.action
     if (action === 'home') {
       if (state.room?.status === 'waiting') leaveRoom()
-      else { clearRoomSubscription(); state.demoMode = false; state.view = 'home'; state.room = null; saveState(); render() }
+      else { clearRoomSubscription(); state.demoMode = false; state.view = 'home'; state.room = null; setRoomUrl(''); saveState(); render() }
     }
     if (action === 'rooms') { state.view = 'rooms'; render() }
     if (action === 'demo') { clearRoomSubscription(); state.demoMode = true; state.soundOn = true; state.room = seedDemoRoom({ start: false }); state.code = state.room.code; state.view = 'lobby'; startAudio(); render(); toast('데모 대기실을 열었어요. 첫 차례를 정해 보세요.') }
@@ -775,6 +783,7 @@ function wire() {
   })
 }
 
+if (state.room?.code) setRoomUrl(state.room.code)
 if (state.room?.status === 'playing') state.view = 'game'
 render()
 const inviteCode = new URLSearchParams(location.search).get('room')
