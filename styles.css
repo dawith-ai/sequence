@@ -40,7 +40,7 @@
   background: var(--felt-deep);
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; overflow-x: hidden; }
+html { scroll-behavior: auto; overflow-x: hidden; }
 body { margin: 0; min-width: 320px; color: var(--foreground); background: var(--background); font-family: var(--font-sans); overflow-x: hidden; }
 button, input, select { font: inherit; }
 button { border: 0; cursor: pointer; }
