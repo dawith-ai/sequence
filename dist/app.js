@@ -10,6 +10,7 @@ const DEFAULT_NAMES = ['Caroline', 'Theresa', '민준', '서연', '하림', '지
 const VALID_PLAYER_COUNTS = [2, 3, 4, 6, 8, 9, 10, 12]
 const VALID_TEAM_COUNTS = [2, 3]
 const TURN_LIMIT_OPTIONS = [20, 30, 60, 90, 120, 180]
+const BINGO_COUNT_OPTIONS = [1, 2, 3, 4, 5]
 
 const DEMO_ROOMS = [
   { code: 'MOSS88A1', name: '금요일 밤 카드 한 판', players: 4, maxPlayers: 6, visibility: 'public', status: 'waiting' },
@@ -35,6 +36,9 @@ let inviteJoinStarted = false
 let roomMigrationInFlight = false
 let demoBotTimer = 0
 let remoteBotTimer = 0
+let chatUnreadCount = 0
+let chatScrollTop = 0
+let chatShouldStickToBottom = true
 
 function uid(prefix = 'id') { return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}` }
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]) }
@@ -63,6 +67,55 @@ function toast(message) {
   toastEl.classList.add('show')
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600)
+}
+function rememberChatScroll() {
+  const messages = document.querySelector('.chat-messages')
+  if (!messages) return
+  chatScrollTop = messages.scrollTop
+  chatShouldStickToBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 32
+}
+function restoreChatScroll() {
+  const messages = document.querySelector('.chat-messages')
+  if (!messages) return
+  messages.scrollTop = chatShouldStickToBottom ? messages.scrollHeight : chatScrollTop
+}
+function chatMessageKey(message, index = 0) { return `${message?.id || ''}:${message?.at || index}:${message?.text || ''}` }
+function resetChatNotice() {
+  chatUnreadCount = 0
+  document.title = 'SEQUENCE ARENA'
+}
+function clearChatUnread() {
+  if (!chatUnreadCount) return
+  resetChatNotice()
+  updateChatUnreadBadge()
+}
+function updateChatUnreadBadge() {
+  const heading = document.querySelector('.chat-panel .side-heading')
+  if (!heading) return
+  let badge = heading.querySelector('.chat-unread-badge')
+  if (!chatUnreadCount) { badge?.remove(); return }
+  if (!badge) { badge = document.createElement('span'); badge.className = 'chat-unread-badge'; badge.setAttribute('aria-live', 'polite'); heading.append(badge) }
+  badge.textContent = `새 메시지 ${chatUnreadCount}`
+}
+function announceChatMessage(message) {
+  if (!message || message.id === state.currentPlayerId) return
+  chatUnreadCount += 1
+  document.title = `● 새 채팅 · SEQUENCE ARENA`
+  updateChatUnreadBadge()
+  if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+    new Notification(`${message.name}님의 채팅`, { body: message.text, tag: `sequence-chat-${state.room?.code || 'room'}` })
+  }
+}
+function chatMarkup(room) {
+  return room.chat?.length ? room.chat.map(message => `<div class="chat-message ${message.id === state.currentPlayerId ? 'mine' : ''}"><strong>${escapeHtml(message.name)}</strong><p>${escapeHtml(message.text)}</p></div>`).join('') : '<div class="chat-empty"><span>♧</span><p>아직 조용하네요.<br>먼저 인사를 건네 보세요.</p></div>'
+}
+function updateChatUi(room) {
+  const messages = document.querySelector('.chat-messages')
+  if (!messages) return
+  rememberChatScroll()
+  messages.innerHTML = chatMarkup(room)
+  restoreChatScroll()
+  updateChatUnreadBadge()
 }
 function loadState() {
   try {
@@ -161,6 +214,12 @@ function schedulePublicRoomsReconnect() {
   publicRoomsReconnectDelay = Math.min(30000, publicRoomsReconnectDelay * 2)
   publicRoomsReconnectTimer = setTimeout(() => { publicRoomsReconnectTimer = 0; subscribePublicRooms() }, delay)
 }
+function roomSyncSignature(room) {
+  if (!room) return ''
+  const payload = remoteRoomPayload(room)
+  delete payload.chat
+  return JSON.stringify(payload)
+}
 function subscribeRoom() {
   if (state.demoMode || !window.SequenceDB || !state.room?.code || subscribedRoomCode === state.room.code) return
   state.connectionStatus = 'connecting'
@@ -171,6 +230,12 @@ function subscribeRoom() {
     state.connectionStatus = 'connected'
     if (!snapshot.exists || !state.room || snapshot.id !== state.room.code) return
     const incoming = snapshot.data()
+    const previousRoom = state.room
+    const previousChat = previousRoom?.chat || []
+    const chatChanged = JSON.stringify(previousChat) !== JSON.stringify(incoming.chat || [])
+    const chatOnlyChanged = Boolean(previousRoom && chatChanged && roomSyncSignature(previousRoom) === roomSyncSignature(incoming))
+    const incomingLastChat = incoming.chat?.at(-1)
+    const previousLastChat = previousChat.at(-1)
     const needsWaitingRoomMigration = incoming.status === 'waiting' && (!Array.isArray(incoming.board) || incoming.board.length !== 100 || incoming.board.some(cell => String(cell.card).startsWith('J')) || !VALID_TEAM_COUNTS.includes(Number(incoming.teamCount)))
     normalizeRoomShape(incoming)
     if (state.movePending) return
@@ -190,7 +255,10 @@ function subscribeRoom() {
     if ((incoming.status === 'playing' || incoming.status === 'finished') && state.view === 'lobby') state.view = 'game'
     if (incoming.status === 'waiting' && state.view === 'game') state.view = 'lobby'
     localStorage.setItem(`sequence-room-${state.room.code}`, JSON.stringify(state.room))
-    if (state.view === 'lobby' || state.view === 'game') render()
+    if (chatOnlyChanged && state.view === 'game') {
+      if (incomingLastChat && chatMessageKey(incomingLastChat) !== chatMessageKey(previousLastChat)) announceChatMessage(incomingLastChat)
+      updateChatUi(incoming)
+    } else if (state.view === 'lobby' || state.view === 'game') render()
     if (needsWaitingRoomMigration) migrateWaitingRoom(incoming.code)
   }, error => { state.connectionStatus = 'reconnecting'; console.warn('Sequence realtime sync unavailable', error); remoteUnsubscribe = null; subscribedRoomCode = ''; scheduleRoomReconnect(); render() })
 }
@@ -208,6 +276,7 @@ function subscribePublicRooms() {
 }
 function clearRoomSubscription() {
   clearBotTimers()
+  resetChatNotice()
   if (remoteUnsubscribe) remoteUnsubscribe()
   if (roomReconnectTimer) clearTimeout(roomReconnectTimer)
   roomReconnectTimer = 0
@@ -315,6 +384,7 @@ function normalizeRoomShape(room) {
   if (!room) return room
   if (!TURN_LIMIT_OPTIONS.includes(Number(room.turnLimitSeconds))) room.turnLimitSeconds = 60
   if (!VALID_TEAM_COUNTS.includes(Number(room.teamCount))) room.teamCount = teamCountFor(Number(room.maxPlayers) || room.players?.length || 2)
+  if (!BINGO_COUNT_OPTIONS.includes(Number(room.sequencesToWin))) room.sequencesToWin = room.teamCount === 2 ? 2 : 1
   normalizeTeams(room)
   if (room.status === 'waiting') {
     room.board = buildBoard()
@@ -325,11 +395,12 @@ function normalizeRoomShape(room) {
   return room
 }
 function turnLimitFor(room) { return TURN_LIMIT_OPTIONS.includes(Number(room?.turnLimitSeconds)) ? Number(room.turnLimitSeconds) : 60 }
-function newRoom({ name, playerName, maxPlayers, visibility, password, turnLimitSeconds = 60 }) {
+function newRoom({ name, playerName, maxPlayers, visibility, password, turnLimitSeconds = 60, sequencesToWin = null }) {
   const teamCount = teamCountFor(Number(maxPlayers))
   const turnLimit = TURN_LIMIT_OPTIONS.includes(Number(turnLimitSeconds)) ? Number(turnLimitSeconds) : 60
+  const bingoCount = BINGO_COUNT_OPTIONS.includes(Number(sequencesToWin)) ? Number(sequencesToWin) : teamCount === 2 ? 2 : 1
   const players = [{ id: state.currentPlayerId, name: playerName, team: 0, isHost: true, hand: [] }]
-  const room = { code: roundCode(), name, visibility, password: visibility === 'private' ? password : '', maxPlayers, players, status: 'waiting', teamCount, turnLimitSeconds: turnLimit, board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: turnLimit, lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
+  const room = { code: roundCode(), name, visibility, password: visibility === 'private' ? password : '', maxPlayers, players, status: 'waiting', teamCount, sequencesToWin: bingoCount, turnLimitSeconds: turnLimit, board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: turnLimit, lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
   normalizeTeams(room)
   return room
 }
@@ -432,7 +503,7 @@ function finishMove(room, card, cellIndex, actor = me(room)) {
   const replacement = drawCard(room)
   if (replacement) player.hand.push(replacement)
   const teamWins = room.sequences.filter(sequence => sequence.team === player.team).length
-  const needed = room.teamCount === 2 ? 2 : 1
+  const needed = BINGO_COUNT_OPTIONS.includes(Number(room.sequencesToWin)) ? Number(room.sequencesToWin) : (room.teamCount === 2 ? 2 : 1)
   if (teamWins >= needed) { room.status = 'finished'; room.winnerTeam = player.team; room.turnStartedAt = null; return }
   room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length
   room.turnSeconds = turnLimitFor(room)
@@ -591,17 +662,20 @@ function lobbyPage() {
   return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b>${isHost && room.players[index].id !== state.currentPlayerId ? `<button class="kick-button" data-action="kick-player" data-player-id="${escapeHtml(room.players[index].id)}">강퇴</button>` : ''}</div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>${startHint}</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''}">${revealMarkup}</div><div class="rule-facts"><span><b>${room.teamCount}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>${turnLimitFor(room)}초</b> 턴 타이머</span></div>${isHost ? `<button class="start-button" data-action="start-game" ${validStart ? '' : 'disabled'}>카드 나누고 시작하기 <span>→</span></button>` : '<div class="host-wait">방장이 카드를 나누면 랜덤으로 첫 차례가 정해지고 게임이 시작돼요.</div>'}</div></section></main></div>`
 }
 function playerPanel(room) {
-  const canKick = me(room)?.isHost && ['waiting', 'playing'].includes(room.status)
-  return `<aside class="side-panel players-panel"><div class="side-heading"><span>플레이어</span><span class="side-heading-count">${room.players.length}명</span></div>${room.players.map(player => `<div class="player-card ${player.id === state.currentPlayerId ? 'is-me' : ''} ${player.id === currentPlayer(room)?.id ? 'active-turn' : ''}"><span class="player-token" style="--token:${TEAM_COLORS[player.team]}">${escapeHtml(player.name.slice(0, 1))}</span><span class="player-details"><strong>${escapeHtml(player.name)}${player.id === state.currentPlayerId ? ' <em>나</em>' : ''}${player.isBot ? ' <em>AI</em>' : ''}</strong><small>${TEAM_NAMES[player.team]} 팀 · ${player.hand?.length || 0}장</small></span>${canKick && player.id !== state.currentPlayerId ? `<button class="kick-button" data-action="kick-player" data-player-id="${escapeHtml(player.id)}">강퇴</button>` : ''}${player.id === currentPlayer(room)?.id ? '<i class="player-light"></i>' : ''}</div>`).join('')}<div class="team-scoreboard"><div class="side-heading"><span>시퀀스</span><span class="side-heading-count">${room.teamCount === 2 ? '2개면 승리' : '1개면 승리'}</span></div>${Array.from({ length: room.teamCount }, (_, team) => `<div class="score-row"><i style="background:${TEAM_COLORS[team]}"></i><span>${TEAM_NAMES[team]}</span><strong>${room.sequences.filter(sequence => sequence.team === team).length}</strong></div>`).join('')}</div><div class="rules-mini">♧　완성된 시퀀스의 칩은 제거할 수 없어요.</div></aside>`
+  const canKick = me(room)?.isHost && room.status === 'waiting'
+  const needed = BINGO_COUNT_OPTIONS.includes(Number(room.sequencesToWin)) ? Number(room.sequencesToWin) : (room.teamCount === 2 ? 2 : 1)
+  return `<aside class="side-panel players-panel"><div class="side-heading"><span>플레이어</span><span class="side-heading-count">${room.players.length}명</span></div>${room.players.map(player => `<div class="player-card ${player.id === state.currentPlayerId ? 'is-me' : ''} ${player.id === currentPlayer(room)?.id ? 'active-turn' : ''}"><span class="player-token" style="--token:${TEAM_COLORS[player.team]}">${escapeHtml(player.name.slice(0, 1))}</span><span class="player-details"><strong>${escapeHtml(player.name)}${player.id === state.currentPlayerId ? ' <em>나</em>' : ''}${player.isBot ? ' <em>AI</em>' : ''}</strong><small>${TEAM_NAMES[player.team]} 팀 · ${player.hand?.length || 0}장</small></span>${canKick && player.id !== state.currentPlayerId ? `<button class="kick-button" data-action="kick-player" data-player-id="${escapeHtml(player.id)}">강퇴</button>` : ''}${player.id === currentPlayer(room)?.id ? '<i class="player-light"></i>' : ''}</div>`).join('')}<div class="team-scoreboard"><div class="side-heading"><span>시퀀스</span><span class="side-heading-count">${needed}개면 승리</span></div>${Array.from({ length: room.teamCount }, (_, team) => `<div class="score-row"><i style="background:${TEAM_COLORS[team]}"></i><span>${TEAM_NAMES[team]}</span><strong>${room.sequences.filter(sequence => sequence.team === team).length}</strong></div>`).join('')}</div><div class="rules-mini">♧　완성된 시퀀스의 칩은 제거할 수 없어요.</div></aside>`
 }
 function boardCellMarkup(room, cell, index) {
   const targets = activeTargets(room)
   const isTarget = targets.has(index)
   const last = room.lastMove?.cellIndex === index
   const seq = room.sequences.some(sequence => sequence.cells.includes(index))
+  const removableChip = isTarget && cell.team !== null
   const value = cell.card === 'FREE' ? '<span class="free-star">✦</span>' : `<span class="cell-card-info"><b class="cell-rank ${isRed(cell.card) ? 'red-suit' : ''}">${escapeHtml(cardRank(cell.card))}</b><i class="cell-suit ${isRed(cell.card) ? 'red-suit' : ''}">${SUITS[suitOf(cell.card)]}</i></span>`
   const chip = cell.team !== null ? `<span class="chip-marker" aria-label="${escapeHtml(`${TEAM_NAMES[cell.team]} 팀 칩`) }">${cell.sequence ? (cell.team === 0 ? 'S' : '✦') : (cell.team === 0 ? '●' : cell.team === 1 ? '◆' : '✦')}</span>` : ''
-  return `<button class="board-cell ${cell.card === 'FREE' ? 'free-cell' : ''} ${isTarget ? 'target-cell' : ''} ${cell.team !== null ? 'occupied' : ''} ${seq ? 'sequence-mark' : ''} ${last ? 'last-move' : ''}" data-cell-index="${index}" style="${cell.team !== null ? `--chip-color:${TEAM_COLORS[cell.team]};` : ''}" ${isTarget && isMyTurn(room) ? '' : 'disabled'} aria-label="${escapeHtml(cell.card === 'FREE' ? '무료 모서리' : cardLabel(cell.card))}">${value}${chip}${last ? '<span class="last-ring"></span>' : ''}</button>`
+  const label = removableChip ? `${cardLabel(cell.card)} · 상대 칩 제거` : (cell.card === 'FREE' ? '무료 모서리' : cardLabel(cell.card))
+  return `<button class="board-cell ${cell.card === 'FREE' ? 'free-cell' : ''} ${isTarget ? 'target-cell' : ''} ${removableChip ? 'chip-removal-target' : ''} ${cell.team !== null ? 'occupied' : ''} ${seq ? 'sequence-mark' : ''} ${last ? 'last-move' : ''}" data-cell-index="${index}" style="${cell.team !== null ? `--chip-color:${TEAM_COLORS[cell.team]};` : ''}" ${isTarget && isMyTurn(room) ? '' : 'disabled'} aria-label="${escapeHtml(label)}">${value}${chip}${last ? '<span class="last-ring"></span>' : ''}</button>`
 }
 function gamePage() {
   const room = state.room
@@ -646,10 +720,12 @@ function updateTimerUi() {
   }
 }
 function render() {
+  rememberChatScroll()
   clearInterval(timerId)
   if (state.view === 'game' && state.room?.status === 'playing') timerId = setInterval(() => { if (state.room && calculateTurnSeconds(state.room) <= 0) advanceTurnIfExpired(); updateTimerUi() }, 1000)
   app.innerHTML = localizeMarkup(state.view === 'home' ? homePage() : state.view === 'rooms' ? roomsPage() : state.view === 'lobby' ? lobbyPage() : state.view === 'rules' ? rulesPage() : gamePage())
   wire()
+  restoreChatScroll()
   scheduleBotTurn()
 }
 function enterRoom(room) { state.demoMode = false; state.room = room; state.code = room.code; state.view = room.status === 'playing' ? 'game' : 'lobby'; setRoomUrl(room.code); saveState(); subscribeRoom(); render() }
@@ -671,7 +747,7 @@ async function kickPlayer(playerId) {
   const room = state.room
   const host = me(room)
   const target = room?.players?.find(player => player.id === playerId)
-  if (!host?.isHost || !target || target.id === state.currentPlayerId || !['waiting', 'playing'].includes(room.status)) return toast('방장만 다른 플레이어를 강퇴할 수 있어요.')
+  if (!host?.isHost || !target || target.id === state.currentPlayerId || room.status !== 'waiting') return toast('강퇴는 게임 시작 전 대기방에서만 할 수 있어요.')
   if (!window.confirm(`${target.name}님을 방에서 강퇴할까요?`)) return
   clearBotTimers()
   if (window.SequenceDB && !state.demoMode) {
@@ -679,20 +755,11 @@ async function kickPlayer(playerId) {
       const updated = await transactRoom(remote => {
         const remoteHost = remote.players?.find(player => player.id === state.currentPlayerId)
         const removedIndex = remote.players?.findIndex(player => player.id === playerId) ?? -1
-        if (!remoteHost?.isHost || removedIndex < 0 || playerId === state.currentPlayerId || !['waiting', 'playing'].includes(remote.status)) return false
+        if (!remoteHost?.isHost || removedIndex < 0 || playerId === state.currentPlayerId || remote.status !== 'waiting') return false
         const remaining = remote.players.filter(player => player.id !== playerId)
-        if (remote.status === 'waiting' || remaining.length < 2) {
+        if (remote.status === 'waiting') {
           Object.assign(remote, freshWaitingRoom({ ...remote, players: remaining }))
           return
-        }
-        const removedCurrentTurn = remote.currentPlayerIndex === removedIndex
-        remote.players = remaining
-        if (removedIndex < remote.currentPlayerIndex) remote.currentPlayerIndex -= 1
-        if (remote.currentPlayerIndex >= remote.players.length) remote.currentPlayerIndex = 0
-        if (removedCurrentTurn) {
-          remote.turnSeconds = turnLimitFor(remote)
-          remote.turnStartedAt = Date.now()
-          remote.players.forEach(player => { delete player.selectedCard; delete player.deadSwapUsed })
         }
       })
       if (!updated) return toast('방 상태가 바뀌어 강퇴하지 못했어요.')
@@ -703,18 +770,8 @@ async function kickPlayer(playerId) {
     }
   } else {
     const removedIndex = room.players.findIndex(player => player.id === playerId)
-    const removedCurrentTurn = room.currentPlayerIndex === removedIndex
     room.players.splice(removedIndex, 1)
-    if (room.status === 'waiting' || room.players.length < 2) Object.assign(room, freshWaitingRoom(room))
-    else {
-      if (removedIndex < room.currentPlayerIndex) room.currentPlayerIndex -= 1
-      if (room.currentPlayerIndex >= room.players.length) room.currentPlayerIndex = 0
-      if (removedCurrentTurn) {
-        room.turnSeconds = turnLimitFor(room)
-        room.turnStartedAt = Date.now()
-        room.players.forEach(player => { delete player.selectedCard; delete player.deadSwapUsed })
-      }
-    }
+    if (room.status === 'waiting') Object.assign(room, freshWaitingRoom(room))
     persistRoom()
   }
   saveState(); state.view = state.room.status === 'waiting' ? 'lobby' : 'game'; render(); toast(`${target.name}님을 강퇴했어요.`); scheduleDemoBotTurn()
@@ -750,13 +807,14 @@ async function addAiPlayer() {
   saveState(); render(); toast(`${aiName}을(를) 초대했어요.`)
 }
 async function createRoom(form) {
-  const data = new FormData(form), playerName = String(data.get('name') || '').trim(), roomName = String(data.get('roomName') || '').trim(), maxPlayers = Number(data.get('maxPlayers')), teamCount = Number(data.get('teamCount')), turnLimitSeconds = Number(data.get('turnLimitSeconds')), visibility = String(data.get('visibility')), password = String(data.get('password') || '')
+  const data = new FormData(form), playerName = String(data.get('name') || '').trim(), roomName = String(data.get('roomName') || '').trim(), maxPlayers = Number(data.get('maxPlayers')), teamCount = Number(data.get('teamCount')), turnLimitSeconds = Number(data.get('turnLimitSeconds')), sequencesToWin = Number(data.get('sequencesToWin')), visibility = String(data.get('visibility')), password = String(data.get('password') || '')
   if (!playerName || !roomName) return toast('이름과 방 이름을 입력해 주세요.')
   if (!VALID_PLAYER_COUNTS.includes(maxPlayers) || !VALID_TEAM_COUNTS.includes(teamCount) || maxPlayers % teamCount !== 0) return toast('인원수와 팀 수를 맞춰 주세요.')
   if (!TURN_LIMIT_OPTIONS.includes(turnLimitSeconds)) return toast('착수 시간을 확인해 주세요.')
+  if (!BINGO_COUNT_OPTIONS.includes(sequencesToWin)) return toast('빙고 승리 조건을 확인해 주세요.')
   if (visibility === 'private' && password.length < 4) return toast('비공개 방 비밀번호는 4자 이상 입력해 주세요.')
   setName(playerName)
-  const room = newRoom({ name: roomName, playerName, maxPlayers, visibility, password, turnLimitSeconds }); room.teamCount = teamCount; normalizeTeams(room)
+  const room = newRoom({ name: roomName, playerName, maxPlayers, visibility, password, turnLimitSeconds, sequencesToWin }); room.teamCount = teamCount; normalizeTeams(room)
   state.room = room; state.code = room.code; state.view = 'lobby'; setRoomUrl(room.code); if (data.get('sound')) { state.soundOn = true; startAudio() }
   await persistRoom(); saveState(); subscribeRoom(); if (state.soundOn) startAudio(); render(); toast(`방이 만들어졌어요 · ${room.code}`)
 }
@@ -1084,6 +1142,13 @@ async function rematch() {
   } catch (error) { console.warn('Sequence rematch unavailable', error); toast('재대결을 준비하지 못했어요. 연결을 확인해 주세요.') }
 }
 function addGameUtilities() {
+  const createForm = document.querySelector('#createForm')
+  if (createForm && !createForm.querySelector('#sequencesToWin')) {
+    const label = document.createElement('label')
+    label.className = 'field-label bingo-setting'
+    label.innerHTML = `<span>빙고 승리 조건</span><select name="sequencesToWin" id="sequencesToWin" aria-label="빙고 승리 조건">${BINGO_COUNT_OPTIONS.map(count => `<option value="${count}" ${count === 2 ? 'selected' : ''}>${count}개 빙고</option>`).join('')}</select>`
+    createForm.querySelector('.field-note')?.before(label)
+  }
   const room = state.room
   if (!room) return
   const inviteBox = document.querySelector('.entry-code')
@@ -1094,6 +1159,12 @@ function addGameUtilities() {
     const heading = document.querySelector('.lobby-card .panel-heading')
     if (heading) {
       const button = document.createElement('button'); button.className = 'add-ai-button'; button.dataset.action = 'add-ai'; button.textContent = '＋ AI 추가'; button.disabled = room.players.length >= room.maxPlayers; button.addEventListener('click', addAiPlayer); heading.insertBefore(button, heading.querySelector('.live-pill'))
+    }
+  }
+  if (state.view === 'lobby') {
+    const facts = document.querySelector('.rule-facts')
+    if (facts && !facts.querySelector('.bingo-fact')) {
+      const fact = document.createElement('span'); fact.className = 'bingo-fact'; fact.innerHTML = `<b>${Number(room.sequencesToWin) || (room.teamCount === 2 ? 2 : 1)}</b>빙고로 승리`; facts.prepend(fact)
     }
   }
   if (state.view !== 'game') return
@@ -1176,11 +1247,18 @@ function wire() {
     mobilePlay.addEventListener('click', () => document.querySelector('.target-cell')?.click())
   }
   addGameUtilities()
+  const chatPanel = document.querySelector('.chat-panel')
+  const chatMessages = chatPanel?.querySelector('.chat-messages')
+  chatPanel?.addEventListener('focusin', clearChatUnread)
+  chatMessages?.addEventListener('scroll', () => {
+    rememberChatScroll()
+    if (chatShouldStickToBottom) clearChatUnread()
+  }, { passive: true })
   document.querySelector('#chatForm')?.addEventListener('submit', async event => {
     event.preventDefault()
     const data = new FormData(event.currentTarget), text = String(data.get('message') || '').trim()
     if (!text || !state.room) return
-    const message = { id: state.currentPlayerId, name: me(state.room).name, text }
+    const message = { id: state.currentPlayerId, name: me(state.room).name, text, at: Date.now() }
     if (window.SequenceDB && !state.demoMode) {
       try {
         const updated = await transactRoom(remote => { remote.chat = [...(remote.chat || []), message].slice(-100) })

@@ -191,7 +191,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .cell-card-info { position: absolute; z-index: 2; top: 8%; left: 7%; right: 7%; display: flex; align-items: baseline; justify-content: center; gap: 3px; color: #1a312b; line-height: 1; }
 .cell-card-info .cell-rank { position: static; width: auto; font-size: clamp(11px, 1.55vw, 20px); }
 .cell-card-info .cell-suit { margin: 0; font-size: clamp(10px, 1.4vw, 18px); }
-.board-cell.occupied .chip-marker { z-index: 1; inset: 39% 14% 7%; font-size: clamp(10px, 1.35vw, 18px); }
+.board-cell.occupied .chip-marker { z-index: 1; top: 39%; right: auto; bottom: auto; left: 50%; width: 72%; height: auto; aspect-ratio: 1 / 1; transform: translateX(-50%); font-size: clamp(10px, 1.35vw, 18px); }
+.board-cell.occupied:not(.chip-removal-target) { pointer-events: none; }
+.board-cell.occupied:not(.chip-removal-target):hover { transform: none; filter: none; }
+.board-cell.chip-removal-target .chip-marker { border-color: #ffb5a8; box-shadow: 0 0 0 2px rgba(255,116,94,.72), inset 0 2px 3px rgba(255,255,255,.42), inset 0 -4px 5px rgba(0,0,0,.28), 0 4px 12px rgba(255,93,75,.4); }
 .board-cell.occupied .last-ring { z-index: 3; }
 
 /* Court-card art: a restrained illustrated badge with a clear action label. */
@@ -208,16 +211,20 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .rules-strip p { display: flex; align-items: baseline; gap: 6px; margin: 0; color: #778479; line-height: 1.45; }
 .rules-strip p b { flex: 0 0 auto; color: #35664f; font-size: 9px; }
 .rules-strip p span { min-width: 0; }
+.rule-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.bingo-setting { margin-top: -2px; }
 
 @media (max-width: 820px) {
+  .rule-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cell-card-info .cell-rank { font-size: 10px; }
   .cell-card-info .cell-suit { font-size: 9px; }
-  .board-cell.occupied .chip-marker { inset: 40% 12% 6%; font-size: 9px; }
+  .board-cell.occupied .chip-marker { top: 40%; width: 74%; font-size: 9px; }
   .playing-card .jack-portrait { width: 37px; height: 48px; }
   .playing-card .jack-action-label { max-width: 58px; font-size: 5px; }
   .playing-card .jack-action-label b { font-size: 6px; }
   .playing-card .jack-action-label span { font-size: 5px; }
 }
+@media (max-width: 520px) { .rule-facts { grid-template-columns: 1fr; } }
 
 @media (max-width: 520px) {
   .topbar { padding-inline: 14px; }
@@ -458,6 +465,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .chat-panel { position: relative; overflow: hidden; background: linear-gradient(145deg, rgba(250,248,237,.99), rgba(229,237,222,.97)); }
 .chat-panel::after { content: '♧'; position: absolute; right: -18px; top: 46px; color: rgba(50,119,83,.06); font-size: 170px; pointer-events: none; }
 .chat-message { border-radius: 8px; box-shadow: 0 3px 9px rgba(36,61,43,.05); }
+.chat-panel .side-heading { display: flex; align-items: center; gap: 8px; }
+.chat-unread-badge { margin-left: auto; padding: 4px 8px; color: #fffaf0; border-radius: 999px; background: #bb624f; box-shadow: 0 3px 8px rgba(111,48,33,.2); font-size: 9px; font-weight: 800; white-space: nowrap; }
 .chat-form input { border-radius: 99px; }
 .chat-form button { border-radius: 50%; box-shadow: 0 3px 8px rgba(25,85,59,.28); }
 .hand-header { padding-bottom: 5px; border-bottom: 1px solid rgba(224,210,163,.15); }
