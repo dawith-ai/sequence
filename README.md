@@ -10,21 +10,20 @@
 - 숫자순·모양순 손패 정렬, 최근 착수 강조, 내 차례 조명
 - 빨간 잭 칩 제거, 검은 잭 자유 배치, 죽은 카드 교환
 - 시퀀스 완성 애니메이션과 셔플 효과음·배경음악
-- Firebase Firestore 실시간 방 동기화
+- Cloudflare D1 기반 공유 방 동기화와 동시 수정 방지
 
-## Firebase
+## 저장소와 실시간 동기화
 
-Firebase 프로젝트: `sequence-arena-dawith`
-
-Firestore 리전은 `asia-northeast1`이며, 게임 상태는 `sequenceRooms/{방코드}`에 저장됩니다.
-현재 규칙은 인증 없는 공개 데모용입니다. 실제 서비스 전에는 Firebase Auth와 App Check를 추가해야 합니다.
+게임 방은 Cloudflare D1의 `rooms` 테이블에 저장됩니다.
+Cloudflare Worker API가 방 상태를 버전 비교 후 조건부 갱신하며, 브라우저는 방 상태를 약 1.5초 간격으로 폴링해 친구 간 변경을 반영합니다.
+현재 지인 전용 사용을 전제로 방 코드를 공유하는 방식이며, 공개 서비스로 전환할 때는 인증·접근 제어·레이트 리밋을 추가해야 합니다.
 
 ## 개발 / 배포
 
 ```bash
 npm run check
 npm run build
-firebase deploy --only firestore:rules
+wrangler deploy
 ```
 
 정적 프론트엔드는 `index.html`, `app.js`, `styles.css`와 `dist/` 산출물로 구성됩니다.

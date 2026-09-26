@@ -23,6 +23,12 @@ let subscribedRoomCode = ''
 let remoteUnsubscribe = null
 let publicRoomsUnsubscribe = null
 let remotePublicRooms = []
+let roomReconnectTimer = 0
+let publicRoomsReconnectTimer = 0
+let roomReconnectDelay = 1000
+let publicRoomsReconnectDelay = 1000
+let turnRevealAnimating = false
+let turnRevealPreview = 0
 
 function uid(prefix = 'id') { return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}` }
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]) }
@@ -43,11 +49,11 @@ function toast(message) {
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem('sequence-arena-state') || 'null')
-    return { view: 'home', room: null, code: '', currentPlayerId: getSessionId(), sort: 'number', soundOn: false, ...saved }
-  } catch { return { view: 'home', room: null, code: '', currentPlayerId: getSessionId(), sort: 'number', soundOn: false } }
+    return { view: 'home', room: null, code: '', currentPlayerId: getSessionId(), sort: 'number', soundOn: false, volume: 0.75, connectionStatus: 'connecting', demoMode: false, ...saved }
+  } catch { return { view: 'home', room: null, code: '', currentPlayerId: getSessionId(), sort: 'number', soundOn: false, volume: 0.75, connectionStatus: 'connecting', demoMode: false } }
 }
 function saveState() {
-  localStorage.setItem('sequence-arena-state', JSON.stringify({ view: state.view, room: state.room, code: state.code, sort: state.sort, soundOn: state.soundOn }))
+  localStorage.setItem('sequence-arena-state', JSON.stringify({ view: state.demoMode ? 'home' : state.view, room: state.demoMode ? null : state.room, code: state.demoMode ? '' : state.code, sort: state.sort, soundOn: state.soundOn, volume: state.volume }))
 }
 function remoteRoomPayload(room) {
   return {
@@ -56,7 +62,7 @@ function remoteRoomPayload(room) {
   }
 }
 function persistRoom() {
-  if (!state.room?.code) return Promise.resolve()
+  if (state.demoMode || !state.room?.code) return Promise.resolve()
   localStorage.setItem(`sequence-room-${state.room.code}`, JSON.stringify(state.room))
   if (!window.SequenceDB) return Promise.resolve()
   return window.SequenceDB.collection('sequenceRooms').doc(state.room.code).set(remoteRoomPayload(state.room)).catch(error => {
@@ -64,29 +70,71 @@ function persistRoom() {
     toast('실시간 저장이 잠시 지연되고 있어요. 연결을 확인해 주세요.')
   })
 }
+async function transactRoom(update) {
+  if (!state.room?.code || !window.SequenceDB) return null
+  const roomRef = window.SequenceDB.collection('sequenceRooms').doc(state.room.code)
+  return window.SequenceDB.runTransaction(async transaction => {
+    const snapshot = await transaction.get(roomRef)
+    const remote = snapshot.data()
+    if (!remote) return null
+    if (update(remote) === false) return null
+    transaction.set(roomRef, remoteRoomPayload(remote))
+    return remote
+  })
+}
 async function getRemoteRoom(code) {
   if (!window.SequenceDB) return null
-  const snapshot = await window.SequenceDB.collection('sequenceRooms').doc(code).get()
-  return snapshot.exists ? snapshot.data() : null
+  let lastError
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const snapshot = await window.SequenceDB.collection('sequenceRooms').doc(code).get()
+      return snapshot.exists ? snapshot.data() : null
+    } catch (error) {
+      lastError = error
+      if (!String(error?.code || '').includes('resource-exhausted')) break
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)))
+    }
+  }
+  throw lastError
+}
+function scheduleRoomReconnect() {
+  if (roomReconnectTimer || !state.room?.code) return
+  const delay = roomReconnectDelay
+  roomReconnectDelay = Math.min(30000, roomReconnectDelay * 2)
+  roomReconnectTimer = setTimeout(() => { roomReconnectTimer = 0; subscribeRoom() }, delay)
+}
+function schedulePublicRoomsReconnect() {
+  if (publicRoomsReconnectTimer) return
+  const delay = publicRoomsReconnectDelay
+  publicRoomsReconnectDelay = Math.min(30000, publicRoomsReconnectDelay * 2)
+  publicRoomsReconnectTimer = setTimeout(() => { publicRoomsReconnectTimer = 0; subscribePublicRooms() }, delay)
 }
 function subscribeRoom() {
-  if (!window.SequenceDB || !state.room?.code || subscribedRoomCode === state.room.code) return
+  if (state.demoMode || !window.SequenceDB || !state.room?.code || subscribedRoomCode === state.room.code) return
+  state.connectionStatus = 'connecting'
   if (remoteUnsubscribe) remoteUnsubscribe()
   subscribedRoomCode = state.room.code
   remoteUnsubscribe = window.SequenceDB.collection('sequenceRooms').doc(state.room.code).onSnapshot(snapshot => {
+    roomReconnectDelay = 1000
+    state.connectionStatus = 'connected'
     if (!snapshot.exists || !state.room || snapshot.id !== state.room.code) return
     const localPlayer = me(state.room)
     const incoming = snapshot.data()
+    const previousTurnId = currentPlayer(state.room)?.id
     if (localPlayer?.selectedCard) {
       const incomingPlayer = incoming.players?.find(player => player.id === localPlayer.id)
       if (incomingPlayer) incomingPlayer.selectedCard = localPlayer.selectedCard
     }
     state.room = incoming
+    if (previousTurnId && previousTurnId !== incoming.players?.[incoming.currentPlayerIndex]?.id) {
+      const nextPlayer = currentPlayer(incoming)
+      if (nextPlayer) toast(nextPlayer.id === state.currentPlayerId ? '내 차례예요. 카드를 골라 주세요.' : `${nextPlayer.name}님 차례예요.`)
+    }
     if ((incoming.status === 'playing' || incoming.status === 'finished') && state.view === 'lobby') state.view = 'game'
     if (incoming.status === 'waiting' && state.view === 'game') state.view = 'lobby'
     localStorage.setItem(`sequence-room-${state.room.code}`, JSON.stringify(state.room))
     if (state.view === 'lobby' || state.view === 'game') render()
-  }, error => console.warn('Sequence realtime sync unavailable', error))
+  }, error => { state.connectionStatus = 'reconnecting'; console.warn('Sequence realtime sync unavailable', error); remoteUnsubscribe = null; subscribedRoomCode = ''; scheduleRoomReconnect(); render() })
 }
 function subscribePublicRooms() {
   if (!window.SequenceDB || publicRoomsUnsubscribe) return
@@ -95,16 +143,33 @@ function subscribePublicRooms() {
     .where('status', '==', 'waiting')
     .limit(50)
     .onSnapshot(snapshot => {
+    publicRoomsReconnectDelay = 1000
     remotePublicRooms = snapshot.docs.map(document => document.data())
     if (state.view === 'rooms') render()
-  }, error => console.warn('Sequence public rooms unavailable', error))
+  }, error => { console.warn('Sequence public rooms unavailable', error); publicRoomsUnsubscribe = null; schedulePublicRoomsReconnect() })
 }
 function clearRoomSubscription() {
   if (remoteUnsubscribe) remoteUnsubscribe()
+  if (roomReconnectTimer) clearTimeout(roomReconnectTimer)
+  roomReconnectTimer = 0
   remoteUnsubscribe = null
   subscribedRoomCode = ''
 }
-window.addEventListener('sequence-firebase-ready', () => { subscribePublicRooms(); subscribeRoom(); render() })
+async function refreshRemoteRoom() {
+  if (!state.room?.code || !window.SequenceDB) return null
+  try {
+    const latest = await getRemoteRoom(state.room.code)
+    if (!latest) return null
+    state.room = latest
+    localStorage.setItem(`sequence-room-${latest.code}`, JSON.stringify(latest))
+    saveState(); render()
+    return latest
+  } catch (error) {
+    console.warn('Sequence room refresh unavailable', error)
+    return null
+  }
+}
+window.addEventListener('sequence-firebase-ready', () => { state.connectionStatus = 'connected'; subscribePublicRooms(); subscribeRoom(); render() })
 function getRoom(code) {
   try { return JSON.parse(localStorage.getItem(`sequence-room-${code}`) || 'null') } catch { return null }
 }
@@ -154,16 +219,14 @@ function normalizeTeams(room) {
 }
 function newRoom({ name, playerName, maxPlayers, visibility, password }) {
   const players = [{ id: state.currentPlayerId, name: playerName, team: 0, isHost: true, hand: [] }]
-  const room = { code: roundCode(), name, visibility, password: visibility === 'private' ? password : '', maxPlayers, players, status: 'waiting', teamCount: 1, board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: 60, lastMove: null, sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
+  const room = { code: roundCode(), name, visibility, password: visibility === 'private' ? password : '', maxPlayers, players, status: 'waiting', teamCount: 1, board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: 60, lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
   normalizeTeams(room)
   return room
 }
-function seedDemoRoom() {
+function seedDemoRoom({ start = true } = {}) {
   const room = newRoom({ name: '시퀀스 체험 테이블', playerName: getName(), maxPlayers: 4, visibility: 'public', password: '' })
   room.players = DEFAULT_NAMES.slice(0, 4).map((name, index) => ({ id: index === 0 ? state.currentPlayerId : uid('bot'), name, team: index % 2, isHost: index === 0, hand: [] }))
-  room.turnStarter = 0
-  room.turnRevealed = true
-  startGame(room)
+  if (start) { room.turnStarter = 0; room.turnRevealed = true; startGame(room) }
   return room
 }
 function startGame(room) {
@@ -172,6 +235,7 @@ function startGame(room) {
   room.board = room.board?.length === 100 ? room.board : buildBoard()
   room.deck = buildDeck()
   room.discard = []
+  room.moveHistory = []
   room.sequences = []
   const size = handSizeFor(room.players.length)
   room.players.forEach(player => { player.hand = [] })
@@ -193,11 +257,13 @@ function calculateTurnSeconds(room) { return Math.max(0, 60 - Math.floor((Date.n
 function legalCells(room, card) {
   if (!card) return []
   const oneEyeJack = cardRank(card) === 'J' && ['H', 'D'].includes(suitOf(card))
+  const twoEyeJack = cardRank(card) === 'J' && ['S', 'C'].includes(suitOf(card))
   if (card === 'FREE') return []
   return room.board.map((cell, index) => {
     if (cell.card === 'FREE') return -1
     if (oneEyeJack) return cell.team !== null && cell.team !== currentTeam(room) && !cell.sequence ? index : -1
-    return cell.team === null ? index : -1
+    if (twoEyeJack) return cell.team === null ? index : -1
+    return cell.card === card && cell.team === null ? index : -1
   }).filter(index => index >= 0)
 }
 function canPlay(room, card) { return legalCells(room, card).length > 0 }
@@ -237,6 +303,7 @@ function finishMove(room, card, cellIndex) {
   const moveSequences = oneEyeJack ? [] : detectSequences(room, cellIndex)
   moveSequences.forEach(sequence => { sequence.forEach(index => { room.board[index].sequence = player.team }); room.sequences.push({ team: player.team, cells: sequence }) })
   room.lastMove = { card, cellIndex, at: Date.now(), team: player.team, sequence: moveSequences[0] || null }
+  room.moveHistory = [...(room.moveHistory || []), { playerId: player.id, playerName: player.name, card, cellIndex, at: room.lastMove.at, team: player.team }].slice(-12)
   player.hand = player.hand.filter(item => item !== card)
   if (room.deck.length) player.hand.push(room.deck.pop())
   room.discard.push(card)
@@ -288,7 +355,7 @@ function header(label = 'home') {
   return `<header class="topbar"><button class="brand" data-action="home"><span class="brand-mark">♠</span><span>SEQUENCE <em>ARENA</em></span></button><nav class="main-nav"><button class="${label === 'home' ? 'active' : ''}" data-action="home">홈</button><button class="${label === 'rooms' ? 'active' : ''}" data-action="rooms">공개 대기실</button><button data-action="rules">게임 규칙</button></nav><div class="topbar-actions"><button class="sound-toggle" data-action="sound">${state.soundOn ? '♫ 사운드 ON' : '♫ 사운드'}</button><span class="profile-dot">${escapeHtml(getName().slice(0, 1))}</span></div><nav class="mobile-nav" aria-label="모바일 메뉴"><button class="${label === 'home' ? 'active' : ''}" data-action="home">홈</button><button class="${label === 'rooms' ? 'active' : ''}" data-action="rooms">공개 방</button><button class="${label === 'rules' ? 'active' : ''}" data-action="rules">규칙</button></nav></header>`
 }
 function homePage() {
-  return `<div class="site-shell landing"><div class="lobby-noise"></div>${header('home')}<main class="landing-main"><section class="hero-copy"><div class="eyebrow"><span></span> 클래식 보드게임, 온라인으로</div><h1>카드 한 장.<br><strong>한 수 앞서.</strong></h1><p>친구들을 테이블로 불러 모으세요. 다섯 개를 한 줄로 잇고,<br>속내를 감춰 보세요.</p><div class="hero-foot"><span>✣　2—12명 플레이</span><i></i><span>실시간으로 함께</span></div></section><section class="entry-grid"><div class="entry-card create-panel"><div class="panel-kicker"><span class="panel-icon">＋</span><span>게임 준비</span><b>01</b></div><h2>방 만들기</h2><p class="panel-copy">친구들을 초대할 테이블을 준비해요.</p><form id="createForm" class="form-stack"><label class="field-label">내 이름<input name="name" maxlength="16" placeholder="사용할 이름을 입력하세요" value="${escapeHtml(getName())}" required /></label><label class="field-label">방 이름<input name="roomName" value="금요일 밤 카드 한 판" maxlength="32" required /></label><div class="field-row"><label class="field-label">인원 수<select name="maxPlayers">${Array.from({ length: 11 }, (_, i) => i + 2).map(n => `<option value="${n}" ${n === 4 ? 'selected' : ''}>${n}명</option>`).join('')}</select></label><label class="field-label">방 공개 설정<select name="visibility" id="visibility"><option value="public">공개 방</option><option value="private">비공개 방</option></select></label></div><div id="passwordField" class="field-label password-field hidden">방 비밀번호<input name="password" type="password" minlength="4" placeholder="4자 이상 입력" /></div><label class="privacy-toggle"><input type="checkbox" name="sound" ${state.soundOn ? 'checked' : ''} /><span></span><b>게임 시작 시 BGM 켜기</b><small>첫 클릭 후 안전하게 재생돼요</small></label><button class="primary-cta" type="submit">방 만들기 <span>→</span></button></form></div><div class="entry-card join-panel"><div class="panel-kicker"><span class="panel-icon door">⌂</span><span>초대 코드가 있나요?</span><b>02</b></div><h2>방 참가</h2><p class="panel-copy">공개 방은 코드만 입력하면 바로 입장해요.</p><form id="joinForm" class="form-stack"><label class="field-label">초대 코드<input name="code" maxlength="8" placeholder="8자리 코드 입력" autocomplete="off" required /></label><button class="primary-cta join-cta" type="submit">방 참가 <span>→</span></button></form><button class="secondary-cta" data-action="rooms">공개 방 둘러보기 <span>↗</span></button></div></section><div class="landing-rule"><span>♠</span> SEQUENCE ARENA <i>카드 한 장으로 시작되는 저녁</i></div></main></div>`
+  return `<div class="site-shell landing"><div class="lobby-noise"></div>${header('home')}<main class="landing-main"><section class="hero-copy"><div class="eyebrow"><span></span> 클래식 보드게임, 온라인으로</div><h1>카드 한 장.<br><strong>한 수 앞서.</strong></h1><p>친구들을 테이블로 불러 모으세요. 다섯 개를 한 줄로 잇고,<br>속내를 감춰 보세요.</p><div class="hero-foot"><span>✣　2—12명 플레이</span><i></i><span>실시간으로 함께</span></div><button class="demo-cta" data-action="demo"><span class="demo-cta-mark">▶</span><span><b>데모 테이블 보기</b><small>가입 없이 게임 화면을 먼저 확인하세요</small></span><strong>→</strong></button></section><section class="entry-grid"><div class="entry-card create-panel"><div class="panel-kicker"><span class="panel-icon">＋</span><span>게임 준비</span><b>01</b></div><h2>방 만들기</h2><p class="panel-copy">친구들을 초대할 테이블을 준비해요.</p><form id="createForm" class="form-stack"><label class="field-label">내 이름<input name="name" maxlength="16" placeholder="사용할 이름을 입력하세요" value="${escapeHtml(getName())}" required /></label><label class="field-label">방 이름<input name="roomName" value="금요일 밤 카드 한 판" maxlength="32" required /></label><div class="field-row"><label class="field-label">인원 수<select name="maxPlayers">${Array.from({ length: 11 }, (_, i) => i + 2).map(n => `<option value="${n}" ${n === 4 ? 'selected' : ''}>${n}명</option>`).join('')}</select></label><label class="field-label">방 공개 설정<select name="visibility" id="visibility"><option value="public">공개 방</option><option value="private">비공개 방</option></select></label></div><div id="passwordField" class="field-label password-field hidden">방 비밀번호<input name="password" type="password" minlength="4" placeholder="4자 이상 입력" /></div><label class="privacy-toggle"><input type="checkbox" name="sound" ${state.soundOn ? 'checked' : ''} /><span></span><b>게임 시작 시 BGM 켜기</b><small>첫 클릭 후 안전하게 재생돼요</small></label><button class="primary-cta" type="submit">방 만들기 <span>→</span></button></form></div><div class="entry-card join-panel"><div class="panel-kicker"><span class="panel-icon door">⌂</span><span>초대 코드가 있나요?</span><b>02</b></div><h2>방 참가</h2><p class="panel-copy">공개 방은 코드만 입력하면 바로 입장해요.</p><form id="joinForm" class="form-stack"><label class="field-label">초대 코드<input name="code" maxlength="8" placeholder="8자리 코드 입력" autocomplete="off" required /></label><button class="primary-cta join-cta" type="submit">방 참가 <span>→</span></button></form><button class="secondary-cta" data-action="rooms">공개 방 둘러보기 <span>↗</span></button></div></section><div class="landing-rule"><span>♠</span> SEQUENCE ARENA <i>카드 한 장으로 시작되는 저녁</i></div></main></div>`
 }
 function roomsPage() {
   const localRooms = Object.keys(localStorage).filter(key => key.startsWith('sequence-room-')).map(key => { try { return JSON.parse(localStorage.getItem(key)) } catch { return null } }).filter(room => room?.visibility === 'public' && room.status === 'waiting')
@@ -299,7 +366,8 @@ function roomsPage() {
 function lobbyPage() {
   const room = state.room
   const isHost = me(room)?.isHost
-  return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b></div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>시작 버튼을 누르면 랜덤으로 첫 플레이어가 선택돼요. 홀수 인원도 각자 팀으로 플레이할 수 있어요.</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''}">${room.turnRevealed ? `<span class="winner-sparkle">✦</span><strong>${escapeHtml(room.players[room.turnStarter]?.name || '')}</strong><small>첫 차례입니다</small>` : '<span class="question-mark">?</span><small>아직 정하지 않았어요</small>'}</div><div class="rule-facts"><span><b>${teamCountFor(room.players.length)}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>60초</b> 턴 타이머</span></div>${isHost ? `<button class="primary-cta" data-action="reveal-turn">${room.turnRevealed ? '다시 정하기' : '첫 차례 뽑기'} <span>✦</span></button><button class="start-button" data-action="start-game" ${room.turnRevealed && room.players.length >= 2 ? '' : 'disabled'}>카드를 나누고 시작하기 <span>→</span></button>` : '<div class="host-wait">방장이 첫 차례를 정하고 게임을 시작할 때까지 기다려 주세요.</div>'}</div></section></main></div>`
+  const revealMarkup = turnRevealAnimating ? `<div class="turn-roulette"><div class="roulette-orbit"><span class="roulette-dot dot-a"></span><span class="roulette-dot dot-b"></span><span class="roulette-dot dot-c"></span><span class="roulette-dot dot-d"></span><strong>${escapeHtml(room.players[turnRevealPreview % room.players.length]?.name?.slice(0, 1) || '?')}</strong></div><small>차례를 고르는 중</small></div>` : room.turnRevealed ? `<span class="winner-sparkle">✦</span><strong>${escapeHtml(room.players[room.turnStarter]?.name || '')}</strong><small>첫 차례입니다</small>` : '<span class="question-mark">?</span><small>아직 정하지 않았어요</small>'
+  return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b></div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>시작 버튼을 누르면 룰렛이 돌며 첫 플레이어를 선택해요. 홀수 인원도 각자 팀으로 플레이할 수 있어요.</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''} ${turnRevealAnimating ? 'spinning' : ''}">${revealMarkup}</div><div class="rule-facts"><span><b>${teamCountFor(room.players.length)}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>60초</b> 턴 타이머</span></div>${isHost ? `<button class="primary-cta" data-action="reveal-turn" ${turnRevealAnimating ? 'disabled' : ''}>${room.turnRevealed ? '다시 정하기' : '첫 차례 뽑기'} <span>✦</span></button><button class="start-button" data-action="start-game" ${room.turnRevealed && room.players.length >= 2 && !turnRevealAnimating ? '' : 'disabled'}>카드를 나누고 시작하기 <span>→</span></button>` : '<div class="host-wait">방장이 첫 차례를 정하고 게임을 시작할 때까지 기다려 주세요.</div>'}</div></section></main></div>`
 }
 function playerPanel(room) {
   return `<aside class="side-panel players-panel"><div class="side-heading"><span>플레이어</span><span class="side-heading-count">${room.players.length}명</span></div>${room.players.map(player => `<div class="player-card ${player.id === state.currentPlayerId ? 'is-me' : ''} ${player.id === currentPlayer(room)?.id ? 'active-turn' : ''}"><span class="player-token" style="--token:${TEAM_COLORS[player.team]}">${escapeHtml(player.name.slice(0, 1))}</span><span class="player-details"><strong>${escapeHtml(player.name)}${player.id === state.currentPlayerId ? ' <em>나</em>' : ''}</strong><small>${TEAM_NAMES[player.team]} 팀 · ${player.hand?.length || 0}장</small></span>${player.id === currentPlayer(room)?.id ? '<i class="player-light"></i>' : ''}</div>`).join('')}<div class="team-scoreboard"><div class="side-heading"><span>시퀀스</span><span class="side-heading-count">${room.teamCount === 2 ? '2개면 승리' : '1개면 승리'}</span></div>${Array.from({ length: room.teamCount }, (_, team) => `<div class="score-row"><i style="background:${TEAM_COLORS[team]}"></i><span>${TEAM_NAMES[team]}</span><strong>${room.sequences.filter(sequence => sequence.team === team).length}</strong></div>`).join('')}</div><div class="rules-mini">♧　완성된 시퀀스의 칩은 제거할 수 없어요.</div></aside>`
@@ -324,13 +392,16 @@ function gamePage() {
   return `<div class="site-shell game-shell"><div class="game-felt"></div><header class="game-topbar"><button class="brand brand-light" data-action="leave"><span class="brand-mark">♠</span><span>SEQUENCE <em>ARENA</em></span></button><div class="game-room-name"><span class="room-live-dot"></span>${escapeHtml(room.name)} <small>#${room.code}</small></div><div class="topbar-actions"><button class="sound-toggle light-button" data-action="sound">${state.soundOn ? '♫ ON' : '♫ BGM'}</button><button class="leave-button" data-action="leave">나가기</button></div></header><main class="game-layout">${playerPanel(room)}<section class="table-center"><div class="turn-banner ${myTurn ? 'your-turn' : ''} ${seconds <= 10 ? 'urgent' : ''}"><div class="turn-icon"><span class="turn-light"></span>${room.status === 'finished' ? '✦' : myTurn ? '◎' : '◷'}</div><div><small>${room.status === 'finished' ? '게임 종료' : myTurn ? '내 차례' : '상대 차례'}</small><strong>${room.status === 'finished' ? `${TEAM_NAMES[room.winnerTeam]} 팀 승리!` : myTurn ? (selected ? '보드에서 놓을 칸을 선택하세요' : '카드를 선택하세요') : `${escapeHtml(active?.name || '상대')}님이 생각 중…`}</strong></div><div class="turn-timer"><span>${formatTime(seconds)}</span><i style="width:${Math.max(0, seconds / 60 * 100)}%"></i></div></div><div class="board-frame"><div class="board-grid" role="grid" aria-label="시퀀스 보드">${room.board.map((cell, index) => boardCellMarkup(room, cell, index)).join('')}</div></div><div class="hand-zone"><div class="hand-header"><div><span class="panel-kicker">YOUR HAND</span><strong>${player?.hand?.length || 0}<small>장</small></strong></div><div class="hand-controls"><button class="sort-button ${state.sort === 'number' ? 'active' : ''}" data-action="sort-number">↕ 숫자 순</button><button class="sort-button ${state.sort === 'suit' ? 'active' : ''}" data-action="sort-suit">♠ 모양 순</button></div></div><div class="hand-cards">${hand.map(card => cardMarkup(card, { selected: selected === card, disabled: !myTurn || room.status !== 'playing', last: room.lastMove?.card === card })).join('')}</div>${selected && myTurn && targets.size === 0 ? `<button class="dead-swap" data-action="dead-swap" ${player.deadSwapUsed ? 'disabled' : ''}>↻　${player.deadSwapUsed ? '이번 차례에는 이미 카드 교환을 했어요' : '사용할 수 없는 카드 교환'}</button>` : `<p class="hand-help">${myTurn ? '카드를 고른 뒤, 빛나는 칸에 놓으세요.' : '내 차례가 되면 카드를 선택할 수 있어요.'}</p>`}</div></section><aside class="side-panel chat-panel"><div class="side-heading"><span>♧ 테이블 채팅</span><span class="chat-live">실시간</span></div><div class="chat-messages">${room.chat?.length ? room.chat.map(message => `<div class="chat-message ${message.id === state.currentPlayerId ? 'mine' : ''}"><strong>${escapeHtml(message.name)}</strong><p>${escapeHtml(message.text)}</p></div>`).join('') : '<div class="chat-empty"><span>♧</span><p>아직 조용하네요.<br>먼저 인사를 건네 보세요.</p></div>'}</div><form id="chatForm" class="chat-form"><input name="message" placeholder="메시지를 입력하세요" maxlength="100" /><button>→</button></form><div class="rules-strip">⌘　한쪽 눈 잭은 상대 칩을 제거하고, 양쪽 눈 잭은 자유 배치해요.</div></aside></main>${room.lastMove?.sequence ? `<div class="sequence-celebration"><div class="celebration-card"><span class="celebration-label">SEQUENCE COMPLETE</span><strong>${TEAM_NAMES[room.lastMove.team]} 팀</strong><div class="celebration-chips">${room.lastMove.sequence.map((_, index) => `<i style="--delay:${index * 80}ms">${room.lastMove.team === 0 ? 'S' : '✦'}</i>`).join('')}</div><p>다섯 칸을 한 줄로 이었어요.</p><button data-action="dismiss-celebration">계속하기</button></div></div>` : ''}</div>`
 }
 function rulesPage() { return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main rules-page"><button class="back-link" data-action="home">← 홈으로</button><div class="eyebrow"><span></span> HOW TO PLAY</div><h1>시퀀스는 이렇게 플레이해요.</h1><div class="rules-grid"><div class="panel rule-card"><span class="rule-number">01</span><h2>카드를 고르고</h2><p>내 손의 카드와 같은 칸에 칩을 놓아요. 빨간 잭은 상대 칩을 치우고, 검은 잭은 빈 칸 어디든 놓을 수 있어요.</p></div><div class="panel rule-card"><span class="rule-number">02</span><h2>다섯 칸을 잇고</h2><p>가로, 세로, 대각선으로 칩 다섯 개를 한 줄로 연결하면 시퀀스가 완성돼요. 모서리는 모두의 무료 칸입니다.</p></div><div class="panel rule-card"><span class="rule-number">03</span><h2>먼저 승리하세요</h2><p>2팀 대전은 두 줄, 그 외의 대전은 한 줄을 먼저 완성하면 승리합니다. 3명, 5명처럼 홀수도 각자 팀으로 즐길 수 있어요.</p></div></div></main></div>` }
+function localizeMarkup(markup) {
+  return markup.replaceAll('OPEN TABLES', '공개 테이블').replaceAll('WAITING ROOM', '대기실').replaceAll('STARTING ORDER', '시작 순서').replaceAll('YOUR HAND', '내 손패').replaceAll('HOW TO PLAY', '플레이 방법').replaceAll('SEQUENCE COMPLETE', '시퀀스 완성').replaceAll('TABLE ·', '테이블 ·').replaceAll('TABLE ', '테이블 ').replaceAll('● LIVE', '● 실시간').replaceAll('♫ 사운드 ON', '♫ 사운드 켜짐').replaceAll('♫ ON', '♫ 켜짐').replaceAll('♫ BGM', '♫ 배경음')
+}
 function render() {
   clearInterval(timerId)
   if (state.view === 'game' && state.room?.status === 'playing') timerId = setInterval(() => { if (state.room && calculateTurnSeconds(state.room) <= 0) advanceTurnIfExpired(); render() }, 1000)
-  app.innerHTML = state.view === 'home' ? homePage() : state.view === 'rooms' ? roomsPage() : state.view === 'lobby' ? lobbyPage() : state.view === 'rules' ? rulesPage() : gamePage()
+  app.innerHTML = localizeMarkup(state.view === 'home' ? homePage() : state.view === 'rooms' ? roomsPage() : state.view === 'lobby' ? lobbyPage() : state.view === 'rules' ? rulesPage() : gamePage())
   wire()
 }
-function enterRoom(room) { state.room = room; state.code = room.code; state.view = room.status === 'playing' ? 'game' : 'lobby'; saveState(); subscribeRoom(); render() }
+function enterRoom(room) { state.demoMode = false; state.room = room; state.code = room.code; state.view = room.status === 'playing' ? 'game' : 'lobby'; saveState(); subscribeRoom(); render() }
 async function createRoom(form) {
   const data = new FormData(form), playerName = String(data.get('name') || '').trim(), roomName = String(data.get('roomName') || '').trim(), maxPlayers = Number(data.get('maxPlayers')), visibility = String(data.get('visibility')), password = String(data.get('password') || '')
   if (!playerName || !roomName) return toast('이름과 방 이름을 입력해 주세요.')
@@ -342,36 +413,68 @@ async function createRoom(form) {
 }
 async function joinRoom(code) {
   code = code.trim().toUpperCase()
+  const demoRoom = DEMO_ROOMS.find(item => item.code === code)
   let room = getRoom(code)
   if (!room) {
     try { room = await getRemoteRoom(code) } catch { room = null }
   }
-  if (!room) room = DEMO_ROOMS.find(item => item.code === code) ? { ...newRoom({ name: DEMO_ROOMS.find(item => item.code === code).name, playerName: '방장', maxPlayers: DEMO_ROOMS.find(item => item.code === code).maxPlayers, visibility: 'public', password: '' }), code, players: Array.from({ length: DEMO_ROOMS.find(item => item.code === code).players }, (_, index) => ({ id: index === 0 ? uid('host') : uid('player'), name: DEFAULT_NAMES[index], team: index % 2, isHost: index === 0, hand: [] })) } : null
+  if (!room && demoRoom) room = { ...newRoom({ name: demoRoom.name, playerName: '방장', maxPlayers: demoRoom.maxPlayers, visibility: 'public', password: '' }), code, players: Array.from({ length: demoRoom.players }, (_, index) => ({ id: index === 0 ? uid('host') : uid('player'), name: DEFAULT_NAMES[index], team: index % 2, isHost: index === 0, hand: [] })) }
   if (!room) return toast('방을 찾을 수 없어요. 초대 코드를 확인해 주세요.')
   if (room.visibility === 'private') { const password = window.prompt('비공개 방 비밀번호를 입력해 주세요.') || ''; if (password !== room.password) return toast('비밀번호가 맞지 않아요.') }
   if (room.status !== 'waiting') return toast('이미 시작한 게임이라 지금은 참가할 수 없어요.')
   if (room.players.length >= room.maxPlayers) return toast('방 인원이 가득 찼어요.')
   const name = getName() === '플레이어' ? (window.prompt('플레이어 이름을 입력해 주세요.') || '플레이어') : getName()
   if (room.players.some(player => player.name === name)) return toast('이 방에서 이미 사용 중인 이름이에요.')
-  setName(name); room.players.push({ id: state.currentPlayerId, name, team: 0, isHost: false, hand: [] }); normalizeTeams(room); state.room = room; state.code = room.code; state.view = 'lobby'; await persistRoom(); saveState(); subscribeRoom(); render(); toast('방에 참가했어요.')
+  setName(name)
+  if (window.SequenceDB && !demoRoom) {
+    try {
+      const joinedRoom = await window.SequenceDB.runTransaction(async transaction => {
+        const roomRef = window.SequenceDB.collection('sequenceRooms').doc(code)
+        const snapshot = await transaction.get(roomRef)
+        const remote = snapshot.data()
+        if (!remote || remote.status !== 'waiting' || remote.players.length >= remote.maxPlayers || remote.players.some(player => player.name === name || player.id === state.currentPlayerId)) return null
+        remote.players.push({ id: state.currentPlayerId, name, team: 0, isHost: false, hand: [] })
+        normalizeTeams(remote)
+        transaction.set(roomRef, remoteRoomPayload(remote))
+        return remote
+      })
+      if (!joinedRoom) return toast('방 상태가 바뀌었거나 이미 참가한 이름이에요.')
+      room = joinedRoom
+    } catch (error) {
+      console.warn('Sequence room join unavailable', error)
+      return toast('방 참가를 저장하지 못했어요. 연결을 확인해 주세요.')
+    }
+  } else {
+    room.players.push({ id: state.currentPlayerId, name, team: 0, isHost: false, hand: [] }); normalizeTeams(room); await persistRoom()
+  }
+  state.room = room; state.code = room.code; state.view = 'lobby'; saveState(); subscribeRoom(); render(); toast('방에 참가했어요.')
 }
 async function leaveRoom() {
   const room = state.room
-  if (room?.status === 'waiting' && window.SequenceDB) {
+  if ((room?.status === 'waiting' || room?.status === 'playing') && window.SequenceDB && !state.demoMode) {
     try {
       const roomRef = window.SequenceDB.collection('sequenceRooms').doc(room.code)
       await window.SequenceDB.runTransaction(async transaction => {
         const snapshot = await transaction.get(roomRef)
         const remote = snapshot.data()
         if (!remote) return
+        const removedIndex = (remote.players || []).findIndex(player => player.id === state.currentPlayerId)
+        if (removedIndex < 0) return
         const remaining = (remote.players || []).filter(player => player.id !== state.currentPlayerId).map(player => ({ ...player }))
         if (!remaining.length) {
           transaction.delete(roomRef)
           return
         }
-        if (!remaining.some(player => player.isHost)) remaining[0].isHost = true
+        if (remote.status === 'waiting' && !remaining.some(player => player.isHost)) remaining[0].isHost = true
         const updated = { ...remote, players: remaining }
-        normalizeTeams(updated)
+        if (remote.status === 'waiting') normalizeTeams(updated)
+        if (remote.status === 'playing') {
+          if (removedIndex < updated.currentPlayerIndex) updated.currentPlayerIndex -= 1
+          if (updated.currentPlayerIndex >= remaining.length) updated.currentPlayerIndex = 0
+          updated.turnStartedAt = Date.now()
+          updated.turnSeconds = 60
+          remaining.forEach(player => { delete player.selectedCard; delete player.deadSwapUsed })
+        }
         transaction.set(roomRef, remoteRoomPayload(updated))
       })
     } catch (error) {
@@ -379,20 +482,70 @@ async function leaveRoom() {
     }
   }
   if (room?.code) localStorage.removeItem(`sequence-room-${room.code}`)
-  clearRoomSubscription(); state.view = 'home'; state.room = null; state.code = ''; saveState(); render()
+  clearRoomSubscription(); state.demoMode = false; state.view = 'home'; state.room = null; state.code = ''; saveState(); render()
 }
-function revealTurn() {
+async function revealTurn() {
   if (!state.room || !me(state.room)?.isHost) return toast('방장만 첫 차례를 정할 수 있어요.')
   if (state.room.players.length < 2) return toast('첫 차례를 정하려면 플레이어가 2명 이상 필요해요.')
-  state.room.turnStarter = Math.floor(Math.random() * state.room.players.length)
-  state.room.turnRevealed = true
-  persistRoom(); saveState(); render(); toast(`${state.room.players[state.room.turnStarter].name}님이 첫 차례예요.`)
+  if (turnRevealAnimating) return
+  turnRevealAnimating = true
+  turnRevealPreview = 0
+  render()
+  await new Promise(resolve => {
+    let ticks = 0
+    const roulette = setInterval(() => {
+      turnRevealPreview = (turnRevealPreview + 1) % state.room.players.length
+      render()
+      ticks += 1
+      if (ticks >= 16) { clearInterval(roulette); resolve() }
+    }, 90)
+  })
+  turnRevealAnimating = false
+  let updated = state.room
+  if (window.SequenceDB && !state.demoMode) {
+    try {
+      updated = await transactRoom(remote => {
+        const host = remote.players?.find(player => player.id === state.currentPlayerId)
+        if (!host?.isHost || remote.status !== 'waiting' || remote.players.length < 2) return false
+        remote.turnStarter = Math.floor(Math.random() * remote.players.length)
+        remote.turnRevealed = true
+      })
+    } catch (error) {
+      console.warn('Sequence turn reveal unavailable', error)
+      return toast('첫 차례를 저장하지 못했어요. 연결을 확인해 주세요.')
+    }
+    if (!updated) return toast('방 상태가 바뀌어 첫 차례를 정하지 못했어요.')
+    state.room = updated
+  } else {
+    state.room.turnStarter = Math.floor(Math.random() * state.room.players.length)
+    state.room.turnRevealed = true
+    persistRoom()
+  }
+  saveState(); render(); toast(`${state.room.players[state.room.turnStarter].name}님이 첫 차례예요.`)
 }
-function beginGame() {
+async function beginGame() {
   if (!state.room || !me(state.room)?.isHost) return toast('방장만 게임을 시작할 수 있어요.')
   if (state.room.players.length < 2) return toast('게임을 시작하려면 플레이어가 2명 이상 필요해요.')
-  if (!state.room.turnRevealed) return toast('먼저 첫 차례를 정해 주세요.')
-  startGame(state.room); state.view = 'game'; persistRoom(); saveState(); render(); if (state.soundOn) { playShuffleSound(); startAudio() } toast('카드를 나눴어요. 게임 시작!')
+  if (turnRevealAnimating) return
+  await revealTurn()
+  if (!state.room?.turnRevealed) return toast('첫 차례를 정하지 못해 게임을 시작할 수 없어요.')
+  if (window.SequenceDB && !state.demoMode) {
+    try {
+      const updated = await transactRoom(remote => {
+        const host = remote.players?.find(player => player.id === state.currentPlayerId)
+        if (!host?.isHost || remote.status !== 'waiting' || remote.players.length < 2 || !remote.turnRevealed) return false
+        startGame(remote)
+      })
+      if (!updated) return toast('방 상태가 바뀌어 게임을 시작하지 못했어요.')
+      state.room = updated
+    } catch (error) {
+      console.warn('Sequence game start unavailable', error)
+      return toast('게임 시작을 저장하지 못했어요. 연결을 확인해 주세요.')
+    }
+  } else {
+      startGame(state.room); persistRoom()
+  }
+  state.view = 'game'; saveState(); render(); if (state.soundOn) { playShuffleSound(); startAudio() } toast('카드를 나눴어요. 게임 시작!')
 }
 function handleCard(card) {
   const room = state.room, player = me(room)
@@ -402,22 +555,78 @@ function handleCard(card) {
   player.selectedCard = card; render()
   if (!canPlay(room, card)) toast('이 카드는 아직 놓을 수 있는 칸이 없어요. 교환할 수 있어요.')
 }
-function handleCell(index) {
+async function commitMoveRemote(card, cellIndex) {
+  const room = state.room
+  const roomRef = window.SequenceDB.collection('sequenceRooms').doc(room.code)
+  return window.SequenceDB.runTransaction(async transaction => {
+    const snapshot = await transaction.get(roomRef)
+    const remote = snapshot.data()
+    const player = remote?.players?.find(item => item.id === state.currentPlayerId)
+    if (!remote || remote.status !== 'playing' || remote.currentPlayerIndex < 0 || remote.players[remote.currentPlayerIndex]?.id !== state.currentPlayerId || !player?.hand?.includes(card) || !legalCells(remote, card).includes(cellIndex)) return null
+    finishMove(remote, card, cellIndex)
+    transaction.set(roomRef, remoteRoomPayload(remote))
+    return remote
+  })
+}
+async function handleCell(index) {
   const room = state.room, player = me(room)
   if (!isMyTurn(room) || !player.selectedCard) return
   if (!legalCells(room, player.selectedCard).includes(index)) return toast('그 카드는 이 칸에 놓을 수 없어요.')
   const card = player.selectedCard
-  finishMove(room, card, index); persistRoom(); saveState(); render()
-  if (room.lastMove?.sequence) toast('시퀀스 완성! 다섯 칸이 빛나요 ✦')
+  if (window.SequenceDB && !state.demoMode) {
+    try {
+      const committedRoom = await commitMoveRemote(card, index)
+      if (!committedRoom) { await refreshRemoteRoom(); return toast('방 상태가 바뀌어 이 수를 놓지 못했어요. 최신 상태를 불러왔습니다.') }
+      state.room = committedRoom
+    } catch (error) {
+      console.warn('Sequence move unavailable', error)
+      return toast('착수를 저장하지 못했어요. 연결을 확인해 주세요.')
+    }
+  } else {
+    finishMove(room, card, index)
+    persistRoom()
+  }
+  saveState(); render()
+  if (state.room.lastMove?.sequence) toast('시퀀스 완성! 다섯 칸이 빛나요 ✦')
 }
-function exchangeDeadCard() { const room = state.room, player = me(room); if (!isMyTurn(room) || !player.selectedCard || player.deadSwapUsed) return; if (canPlay(room, player.selectedCard)) return toast('아직 놓을 수 있는 칸이 있어요.'); const old = player.selectedCard; player.hand = player.hand.filter(card => card !== old); room.discard.push(old); if (room.deck.length) player.hand.push(room.deck.pop()); player.deadSwapUsed = true; delete player.selectedCard; cycleTurn(room); persistRoom(); saveState(); render(); toast('카드를 교환하고 차례를 넘겼어요.') }
+async function exchangeDeadCard() {
+  const room = state.room, player = me(room)
+  if (!isMyTurn(room) || !player.selectedCard || player.deadSwapUsed) return
+  if (canPlay(room, player.selectedCard)) return toast('아직 놓을 수 있는 칸이 있어요.')
+  const old = player.selectedCard
+  if (window.SequenceDB && !state.demoMode) {
+    try {
+      const updated = await transactRoom(remote => {
+        const remotePlayer = remote.players?.find(item => item.id === state.currentPlayerId)
+        if (remote.status !== 'playing' || remote.players[remote.currentPlayerIndex]?.id !== state.currentPlayerId || !remotePlayer?.hand?.includes(old) || remotePlayer.deadSwapUsed || canPlay(remote, old)) return false
+        remotePlayer.hand = remotePlayer.hand.filter(card => card !== old)
+        remote.discard = [...(remote.discard || []), old]
+        if (remote.deck?.length) remotePlayer.hand.push(remote.deck.pop())
+        remotePlayer.deadSwapUsed = true
+        delete remotePlayer.selectedCard
+        remote.currentPlayerIndex = (remote.currentPlayerIndex + 1) % remote.players.length
+        remote.turnSeconds = 60
+        remote.turnStartedAt = Date.now()
+        remote.players.forEach(item => { delete item.selectedCard; delete item.deadSwapUsed })
+      })
+      if (!updated) return toast('방 상태가 바뀌어 카드를 교환하지 못했어요.')
+      state.room = updated
+    } catch (error) {
+      console.warn('Sequence dead-card exchange unavailable', error)
+      return toast('카드 교환을 저장하지 못했어요. 연결을 확인해 주세요.')
+    }
+  } else {
+    player.hand = player.hand.filter(card => card !== old); room.discard.push(old); if (room.deck.length) player.hand.push(room.deck.pop()); player.deadSwapUsed = true; delete player.selectedCard; cycleTurn(room); persistRoom()
+  }
+  saveState(); render(); toast('카드를 교환하고 차례를 넘겼어요.')
+}
 function getAudioContext() {
   if (audio?.ctx) return audio.ctx
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext
     if (!AudioContext) return null
     const ctx = new AudioContext(), master = ctx.createGain()
-    master.gain.value = 0.7; master.connect(ctx.destination)
+    master.gain.value = state.volume ?? 0.75; master.connect(ctx.destination)
     audio = { ctx, master, interval: null }
     return ctx
   } catch { return null }
@@ -437,18 +646,103 @@ function playShuffleSound() {
 function startAudio() {
   const ctx = getAudioContext()
   if (!ctx || audio.interval) return
-  if (ctx.state === 'suspended') ctx.resume()
-  const gain = ctx.createGain(); gain.gain.value = 0.035; gain.connect(audio.master)
-  const notes = [196, 246.94, 293.66, 392, 293.66, 246.94]; let index = 0
-  const playNote = () => { if (!state.soundOn) return; const oscillator = ctx.createOscillator(), noteGain = ctx.createGain(); oscillator.type = 'sine'; oscillator.frequency.value = notes[index++ % notes.length]; noteGain.gain.setValueAtTime(0, ctx.currentTime); noteGain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.08); noteGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.5); oscillator.connect(noteGain); noteGain.connect(gain); oscillator.start(); oscillator.stop(ctx.currentTime + 2.6) }
-  playNote(); audio.interval = setInterval(playNote, 2100)
+  const begin = () => {
+    if (!state.soundOn || !audio || audio.interval) return
+    const music = ctx.createGain(), filter = ctx.createBiquadFilter()
+    music.gain.value = 0.32; filter.type = 'lowpass'; filter.frequency.value = 1450; filter.Q.value = 0.35
+    music.connect(filter); filter.connect(audio.master)
+    const chords = [[196, 246.94, 293.66], [174.61, 220, 261.63], [146.83, 196, 246.94], [164.81, 207.65, 246.94]]
+    let chordIndex = 0
+    const playChord = () => {
+      if (!state.soundOn || !audio) return
+      const now = ctx.currentTime, chord = chords[chordIndex++ % chords.length]
+      chord.forEach((frequency, voice) => {
+        const oscillator = ctx.createOscillator(), voiceGain = ctx.createGain()
+        oscillator.type = voice === 1 ? 'triangle' : 'sine'; oscillator.frequency.value = frequency; oscillator.detune.value = voice === 0 ? -4 : voice === 2 ? 4 : 0
+        voiceGain.gain.setValueAtTime(0.0001, now); voiceGain.gain.exponentialRampToValueAtTime(0.09, now + 1.1); voiceGain.gain.exponentialRampToValueAtTime(0.0001, now + 5.8)
+        oscillator.connect(voiceGain); voiceGain.connect(music); oscillator.start(now); oscillator.stop(now + 6.1)
+      })
+      const shimmer = ctx.createOscillator(), shimmerGain = ctx.createGain()
+      shimmer.type = 'sine'; shimmer.frequency.value = chord[2] * 2; shimmerGain.gain.setValueAtTime(0.0001, now); shimmerGain.gain.exponentialRampToValueAtTime(0.018, now + 1.4); shimmerGain.gain.exponentialRampToValueAtTime(0.0001, now + 4.4)
+      shimmer.connect(shimmerGain); shimmerGain.connect(music); shimmer.start(now); shimmer.stop(now + 4.7)
+    }
+    playChord(); audio.interval = setInterval(playChord, 6100)
+  }
+  if (ctx.state === 'suspended') ctx.resume().then(begin).catch(() => {})
+  else begin()
 }
+function setVolume(value) { state.volume = Math.max(0, Math.min(1, Number(value))); if (audio?.master) audio.master.gain.value = state.volume; saveState() }
 function toggleSound() { state.soundOn = !state.soundOn; if (state.soundOn) startAudio(); else if (audio) { clearInterval(audio.interval); audio.ctx.close(); audio = null } saveState(); render(); toast(state.soundOn ? '잔잔한 테이블 BGM을 켰어요.' : 'BGM을 껐어요.') }
+async function dismissCelebration() {
+  if (!state.room?.lastMove?.sequence) return
+  if (window.SequenceDB && !state.demoMode) {
+    try {
+      const updated = await transactRoom(remote => { if (!remote.lastMove) return false; remote.lastMove.sequence = null })
+      if (!updated) return toast('게임 상태가 바뀌어 연출을 닫지 못했어요.')
+      state.room = updated
+    } catch (error) {
+      console.warn('Sequence celebration update unavailable', error)
+      return toast('게임 상태를 저장하지 못했어요. 연결을 확인해 주세요.')
+    }
+  } else {
+    state.room.lastMove.sequence = null
+    persistRoom()
+  }
+  saveState(); render()
+}
+function copyInvite() {
+  if (!state.room?.code) return
+  const link = `${location.origin}${location.pathname}?room=${encodeURIComponent(state.room.code)}`
+  navigator.clipboard?.writeText(link)
+  toast('초대 링크를 복사했어요.')
+}
+function freshWaitingRoom(room) {
+  const next = { ...room, status: 'waiting', board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: 60, lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
+  next.players = (room.players || []).map(player => ({ ...player, hand: [], selectedCard: undefined, deadSwapUsed: undefined }))
+  normalizeTeams(next)
+  return next
+}
+async function rematch() {
+  if (!state.room || state.room.status !== 'finished') return
+  if (state.demoMode) {
+    state.room = freshWaitingRoom(state.room); state.view = 'lobby'; render(); toast('새 대결을 준비했어요. 첫 차례를 정해 주세요.'); return
+  }
+  try {
+    const updated = await transactRoom(remote => { if (remote.status !== 'finished') return false; Object.assign(remote, freshWaitingRoom(remote)) })
+    if (!updated) return toast('게임 상태가 바뀌어 재대결을 준비하지 못했어요.')
+    state.room = updated; state.view = 'lobby'; saveState(); render(); toast('새 대결을 준비했어요. 첫 차례를 정해 주세요.')
+  } catch (error) { console.warn('Sequence rematch unavailable', error); toast('재대결을 준비하지 못했어요. 연결을 확인해 주세요.') }
+}
+function addGameUtilities() {
+  const room = state.room
+  if (!room) return
+  const inviteBox = document.querySelector('.entry-code')
+  if (state.view === 'lobby' && inviteBox && !inviteBox.querySelector('.invite-link-button')) {
+    const button = document.createElement('button'); button.className = 'invite-link-button'; button.textContent = '초대 링크 복사'; button.addEventListener('click', copyInvite); inviteBox.append(button)
+  }
+  if (state.view !== 'game') return
+  const actions = document.querySelector('.game-topbar .topbar-actions')
+  if (actions && !actions.querySelector('.connection-pill')) {
+    const connection = document.createElement('span'); connection.className = `connection-pill ${state.connectionStatus}`; connection.textContent = state.connectionStatus === 'connected' || state.demoMode ? '● 연결됨' : '◌ 재연결 중'; actions.prepend(connection)
+    const volume = document.createElement('input'); volume.className = 'volume-control'; volume.type = 'range'; volume.min = '0'; volume.max = '1'; volume.step = '.01'; volume.value = state.volume; volume.title = 'BGM 볼륨'; volume.setAttribute('aria-label', 'BGM 볼륨'); volume.addEventListener('input', event => setVolume(event.target.value)); actions.insertBefore(volume, actions.querySelector('.leave-button'))
+  }
+  const chatPanel = document.querySelector('.chat-panel')
+  if (chatPanel && !chatPanel.querySelector('.move-history')) {
+    const history = document.createElement('div'); history.className = 'move-history'; history.innerHTML = `<strong>최근 착수</strong>${(room.moveHistory || []).slice(-4).reverse().map(move => `<span>${escapeHtml(move.playerName)} · ${escapeHtml(cardLabel(move.card))}</span>`).join('') || '<small>아직 착수가 없어요.</small>'}`; chatPanel.append(history)
+  }
+  if (room.status === 'finished' && !document.querySelector('.game-result-panel')) {
+    const result = document.createElement('div'); result.className = 'game-result-panel'; result.innerHTML = `<span class="celebration-label">GAME COMPLETE</span><strong>${escapeHtml(TEAM_NAMES[room.winnerTeam] || '')} 팀 승리</strong><p>완성된 시퀀스 ${room.sequences.filter(sequence => sequence.team === room.winnerTeam).length}개 · 총 착수 ${(room.moveHistory || []).length}회</p><button type="button">재대결 준비</button>`; result.querySelector('button').addEventListener('click', rematch); document.querySelector('.game-shell').append(result)
+  }
+}
 function wire() {
   document.querySelectorAll('[data-action]').forEach(element => element.addEventListener('click', () => {
     const action = element.dataset.action
-    if (action === 'home') { clearRoomSubscription(); state.view = 'home'; state.room = null; saveState(); render() }
+    if (action === 'home') {
+      if (state.room?.status === 'waiting') leaveRoom()
+      else { clearRoomSubscription(); state.demoMode = false; state.view = 'home'; state.room = null; saveState(); render() }
+    }
     if (action === 'rooms') { state.view = 'rooms'; render() }
+    if (action === 'demo') { clearRoomSubscription(); state.demoMode = true; state.soundOn = true; state.room = seedDemoRoom({ start: false }); state.code = state.room.code; state.view = 'lobby'; startAudio(); render(); toast('데모 대기실을 열었어요. 첫 차례를 정해 보세요.') }
     if (action === 'rules') { state.view = 'rules'; render() }
     if (action === 'sound') toggleSound()
     if (action === 'leave') leaveRoom()
@@ -458,7 +752,7 @@ function wire() {
     if (action === 'sort-number') { state.sort = 'number'; saveState(); render() }
     if (action === 'sort-suit') { state.sort = 'suit'; saveState(); render() }
     if (action === 'dead-swap') exchangeDeadCard()
-    if (action === 'dismiss-celebration') { state.room.lastMove.sequence = null; persistRoom(); render() }
+    if (action === 'dismiss-celebration') dismissCelebration()
   }))
   document.querySelector('#createForm')?.addEventListener('submit', async event => { event.preventDefault(); await createRoom(event.currentTarget) })
   document.querySelector('#joinForm')?.addEventListener('submit', async event => { event.preventDefault(); await joinRoom(new FormData(event.currentTarget).get('code') || '') })
@@ -466,8 +760,44 @@ function wire() {
   document.querySelectorAll('[data-room-code]').forEach(element => element.addEventListener('click', () => joinRoom(element.dataset.roomCode)))
   document.querySelectorAll('[data-card]').forEach(element => element.addEventListener('click', () => handleCard(element.dataset.card)))
   document.querySelectorAll('[data-cell-index]').forEach(element => element.addEventListener('click', () => handleCell(Number(element.dataset.cellIndex))))
-  document.querySelector('#chatForm')?.addEventListener('submit', event => { event.preventDefault(); const data = new FormData(event.currentTarget), text = String(data.get('message') || '').trim(); if (!text) return; state.room.chat = [...(state.room.chat || []), { id: state.currentPlayerId, name: me(state.room).name, text }]; persistRoom(); saveState(); render() })
+  const handZone = document.querySelector('.hand-zone')
+  if (handZone && !handZone.querySelector('.mobile-play-cta')) {
+    const button = document.createElement('button')
+    button.className = 'mobile-play-cta'
+    button.type = 'button'
+    button.textContent = '플레이'
+    handZone.append(button)
+  }
+  const mobilePlay = document.querySelector('.mobile-play-cta')
+  if (mobilePlay) {
+    const ready = state.view === 'game' && isMyTurn(state.room) && activeTargets(state.room).size > 0
+    mobilePlay.disabled = !ready
+    mobilePlay.addEventListener('click', () => document.querySelector('.target-cell')?.click())
+  }
+  addGameUtilities()
+  document.querySelector('#chatForm')?.addEventListener('submit', async event => {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget), text = String(data.get('message') || '').trim()
+    if (!text || !state.room) return
+    const message = { id: state.currentPlayerId, name: me(state.room).name, text }
+    if (window.SequenceDB && !state.demoMode) {
+      try {
+        const updated = await transactRoom(remote => { remote.chat = [...(remote.chat || []), message].slice(-100) })
+        if (!updated) return toast('채팅을 저장하지 못했어요. 방이 아직 존재하는지 확인해 주세요.')
+        state.room = updated
+      } catch (error) {
+        console.warn('Sequence chat unavailable', error)
+        return toast('메시지를 보내지 못했어요. 연결을 확인해 주세요.')
+      }
+    } else {
+      state.room.chat = [...(state.room.chat || []), message].slice(-100)
+      persistRoom()
+    }
+    saveState(); render()
+  })
 }
 
 if (state.room?.status === 'playing') state.view = 'game'
 render()
+const inviteCode = new URLSearchParams(location.search).get('room')
+if (inviteCode && state.view === 'home') setTimeout(() => joinRoom(inviteCode), 700)
