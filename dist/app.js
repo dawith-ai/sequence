@@ -27,8 +27,6 @@ let roomReconnectTimer = 0
 let publicRoomsReconnectTimer = 0
 let roomReconnectDelay = 1000
 let publicRoomsReconnectDelay = 1000
-let turnRevealAnimating = false
-let turnRevealPreview = 0
 
 function uid(prefix = 'id') { return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}` }
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]) }
@@ -366,8 +364,8 @@ function roomsPage() {
 function lobbyPage() {
   const room = state.room
   const isHost = me(room)?.isHost
-  const revealMarkup = turnRevealAnimating ? `<div class="turn-roulette"><div class="roulette-orbit"><span class="roulette-dot dot-a"></span><span class="roulette-dot dot-b"></span><span class="roulette-dot dot-c"></span><span class="roulette-dot dot-d"></span><strong>${escapeHtml(room.players[turnRevealPreview % room.players.length]?.name?.slice(0, 1) || '?')}</strong></div><small>차례를 고르는 중</small></div>` : room.turnRevealed ? `<span class="winner-sparkle">✦</span><strong>${escapeHtml(room.players[room.turnStarter]?.name || '')}</strong><small>첫 차례입니다</small>` : '<span class="question-mark">?</span><small>아직 정하지 않았어요</small>'
-  return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b></div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>카드 나누기를 누르면 룰렛이 한 번 돌고, 랜덤으로 첫 차례를 정한 뒤 바로 게임을 시작해요.</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''} ${turnRevealAnimating ? 'spinning' : ''}">${revealMarkup}</div><div class="rule-facts"><span><b>${teamCountFor(room.players.length)}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>60초</b> 턴 타이머</span></div>${isHost ? `<button class="start-button" data-action="start-game" ${room.players.length >= 2 && !turnRevealAnimating ? '' : 'disabled'}>룰렛 돌리고 카드 나누기 <span>→</span></button>` : '<div class="host-wait">방장이 카드를 나누면 룰렛과 함께 게임이 시작돼요.</div>'}</div></section></main></div>`
+  const revealMarkup = room.turnRevealed ? `<span class="winner-sparkle">✦</span><strong>${escapeHtml(room.players[room.turnStarter]?.name || '')}</strong><small>첫 차례입니다</small>` : '<span class="question-mark">?</span><small>시작하면 랜덤으로 정해요</small>'
+  return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b></div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>카드 나누기를 누르면 랜덤으로 첫 차례를 정한 뒤 바로 게임을 시작해요.</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''}">${revealMarkup}</div><div class="rule-facts"><span><b>${teamCountFor(room.players.length)}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>60초</b> 턴 타이머</span></div>${isHost ? `<button class="start-button" data-action="start-game" ${room.players.length >= 2 ? '' : 'disabled'}>카드 나누고 시작하기 <span>→</span></button>` : '<div class="host-wait">방장이 카드를 나누면 랜덤으로 첫 차례가 정해지고 게임이 시작돼요.</div>'}</div></section></main></div>`
 }
 function playerPanel(room) {
   return `<aside class="side-panel players-panel"><div class="side-heading"><span>플레이어</span><span class="side-heading-count">${room.players.length}명</span></div>${room.players.map(player => `<div class="player-card ${player.id === state.currentPlayerId ? 'is-me' : ''} ${player.id === currentPlayer(room)?.id ? 'active-turn' : ''}"><span class="player-token" style="--token:${TEAM_COLORS[player.team]}">${escapeHtml(player.name.slice(0, 1))}</span><span class="player-details"><strong>${escapeHtml(player.name)}${player.id === state.currentPlayerId ? ' <em>나</em>' : ''}</strong><small>${TEAM_NAMES[player.team]} 팀 · ${player.hand?.length || 0}장</small></span>${player.id === currentPlayer(room)?.id ? '<i class="player-light"></i>' : ''}</div>`).join('')}<div class="team-scoreboard"><div class="side-heading"><span>시퀀스</span><span class="side-heading-count">${room.teamCount === 2 ? '2개면 승리' : '1개면 승리'}</span></div>${Array.from({ length: room.teamCount }, (_, team) => `<div class="score-row"><i style="background:${TEAM_COLORS[team]}"></i><span>${TEAM_NAMES[team]}</span><strong>${room.sequences.filter(sequence => sequence.team === team).length}</strong></div>`).join('')}</div><div class="rules-mini">♧　완성된 시퀀스의 칩은 제거할 수 없어요.</div></aside>`
@@ -484,63 +482,9 @@ async function leaveRoom() {
   if (room?.code) localStorage.removeItem(`sequence-room-${room.code}`)
   clearRoomSubscription(); state.demoMode = false; state.view = 'home'; state.room = null; state.code = ''; saveState(); render()
 }
-async function revealTurn() {
-  if (!state.room || !me(state.room)?.isHost) return toast('방장만 첫 차례를 정할 수 있어요.')
-  if (state.room.players.length < 2) return toast('첫 차례를 정하려면 플레이어가 2명 이상 필요해요.')
-  if (turnRevealAnimating) return
-  turnRevealAnimating = true
-  turnRevealPreview = 0
-  render()
-  await new Promise(resolve => {
-    let ticks = 0
-    const roulette = setInterval(() => {
-      turnRevealPreview = (turnRevealPreview + 1) % state.room.players.length
-      render()
-      ticks += 1
-      if (ticks >= 16) { clearInterval(roulette); resolve() }
-    }, 90)
-  })
-  turnRevealAnimating = false
-  let updated = state.room
-  if (window.SequenceDB && !state.demoMode) {
-    try {
-      updated = await transactRoom(remote => {
-        const host = remote.players?.find(player => player.id === state.currentPlayerId)
-        if (!host?.isHost || remote.status !== 'waiting' || remote.players.length < 2) return false
-        remote.turnStarter = Math.floor(Math.random() * remote.players.length)
-        remote.turnRevealed = true
-      })
-    } catch (error) {
-      console.warn('Sequence turn reveal unavailable', error)
-      return toast('첫 차례를 저장하지 못했어요. 연결을 확인해 주세요.')
-    }
-    if (!updated) return toast('방 상태가 바뀌어 첫 차례를 정하지 못했어요.')
-    state.room = updated
-  } else {
-    state.room.turnStarter = Math.floor(Math.random() * state.room.players.length)
-    state.room.turnRevealed = true
-    persistRoom()
-  }
-  saveState(); render(); toast(`${state.room.players[state.room.turnStarter].name}님이 첫 차례예요.`)
-}
 async function beginGame() {
   if (!state.room || !me(state.room)?.isHost) return toast('방장만 게임을 시작할 수 있어요.')
   if (state.room.players.length < 2) return toast('게임을 시작하려면 플레이어가 2명 이상 필요해요.')
-  if (turnRevealAnimating) return
-  turnRevealAnimating = true
-  turnRevealPreview = 0
-  render()
-  await new Promise(resolve => {
-    let ticks = 0
-    const roulette = setInterval(() => {
-      if (!state.room?.players?.length) { clearInterval(roulette); resolve(); return }
-      turnRevealPreview = (turnRevealPreview + 1) % state.room.players.length
-      render()
-      ticks += 1
-      if (ticks >= 10) { clearInterval(roulette); resolve() }
-    }, 70)
-  })
-  turnRevealAnimating = false
   if (window.SequenceDB && !state.demoMode) {
     try {
       const updated = await transactRoom(remote => {
@@ -764,7 +708,6 @@ function wire() {
     if (action === 'sound') toggleSound()
     if (action === 'leave') leaveRoom()
     if (action === 'copy-code') { navigator.clipboard?.writeText(state.room.code); toast(`방 코드 ${state.room.code}를 복사했어요.`) }
-    if (action === 'reveal-turn') revealTurn()
     if (action === 'start-game') beginGame()
     if (action === 'sort-number') { state.sort = 'number'; saveState(); render() }
     if (action === 'sort-suit') { state.sort = 'suit'; saveState(); render() }
