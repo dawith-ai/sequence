@@ -7,7 +7,7 @@ const RANK_ORDER = { A: 14, K: 13, Q: 12, J: 11, '10': 10, '9': 9, '8': 8, '7': 
 const TEAM_COLORS = ['#16b86b', '#2679ed', '#e04f71', '#efad32', '#8b5cf6', '#10a6a6', '#e56825', '#718096', '#cf4bca', '#5b9c36', '#c98129', '#4d65d7']
 const TEAM_NAMES = ['초록', '파랑', '분홍', '금빛', '보라', '청록', '주황', '회색', '라일락', '연두', '호박', '남색']
 const DEFAULT_NAMES = ['Caroline', 'Theresa', '민준', '서연', '하림', '지호', '다은', '현우', '유나', '도윤', '채원', '준서']
-const DEMO_PLAYER_NAMES = ['은지', 'Theresa', '민준', '하림']
+const DEMO_PLAYER_NAMES = ['AI 1', 'AI 2', 'AI 3', 'AI 4']
 const VALID_PLAYER_COUNTS = [2, 3, 4, 6, 8, 9, 10, 12]
 const VALID_TEAM_COUNTS = [2, 3]
 const TURN_LIMIT_OPTIONS = [20, 30, 60, 90, 120, 180]
@@ -41,6 +41,9 @@ let chatUnreadCount = 0
 let chatScrollTop = 0
 let chatShouldStickToBottom = true
 let renderedView = ''
+let celebrationDismissInFlight = false
+let dismissedCelebrationAt = null
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
 
 function uid(prefix = 'id') { return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}` }
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]) }
@@ -232,6 +235,8 @@ function subscribeRoom() {
     state.connectionStatus = 'connected'
     if (!snapshot.exists || !state.room || snapshot.id !== state.room.code) return
     const incoming = snapshot.data()
+    if (dismissedCelebrationAt && incoming.lastMove?.at === dismissedCelebrationAt && incoming.lastMove.sequence) incoming.lastMove = { ...incoming.lastMove, sequence: null }
+    if (dismissedCelebrationAt && incoming.lastMove?.at !== dismissedCelebrationAt) dismissedCelebrationAt = null
     const previousRoom = state.room
     const previousChat = previousRoom?.chat || []
     const chatChanged = JSON.stringify(previousChat) !== JSON.stringify(incoming.chat || [])
@@ -279,6 +284,8 @@ function subscribePublicRooms() {
 function clearRoomSubscription() {
   clearBotTimers()
   resetChatNotice()
+  celebrationDismissInFlight = false
+  dismissedCelebrationAt = null
   if (remoteUnsubscribe) remoteUnsubscribe()
   if (roomReconnectTimer) clearTimeout(roomReconnectTimer)
   roomReconnectTimer = 0
@@ -407,7 +414,7 @@ function newRoom({ name, playerName, maxPlayers, visibility, password, turnLimit
   return room
 }
 function seedDemoRoom({ start = true } = {}) {
-  const room = newRoom({ name: '시퀀스 체험 테이블', playerName: getName(), maxPlayers: 4, visibility: 'public', password: '' })
+  const room = newRoom({ name: '시퀀스 체험 테이블', playerName: 'AI 1', maxPlayers: 4, visibility: 'public', password: '' })
   room.players = DEMO_PLAYER_NAMES.map((name, index) => ({ id: index === 0 ? state.currentPlayerId : uid('bot'), name, team: index % 2, isHost: index === 0, isBot: index !== 0, hand: [] }))
   if (start) { room.turnStarter = Math.floor(Math.random() * room.players.length); room.turnRevealed = true; startGame(room) }
   return room
@@ -721,6 +728,11 @@ function updateTimerUi() {
     banner.classList.toggle('urgent', seconds <= 10)
   }
 }
+function resetPageScroll() {
+  document.documentElement.scrollTop = 0
+  document.body.scrollTop = 0
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+}
 function render() {
   const viewChanged = renderedView !== state.view
   rememberChatScroll()
@@ -729,15 +741,16 @@ function render() {
   app.innerHTML = localizeMarkup(state.view === 'home' ? homePage() : state.view === 'rooms' ? roomsPage() : state.view === 'lobby' ? lobbyPage() : state.view === 'rules' ? rulesPage() : gamePage())
   if (viewChanged) {
     document.activeElement?.blur?.()
-    const resetViewport = () => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0; window.scrollTo({ top: 0, left: 0, behavior: 'auto' }) }
-    resetViewport()
-    setTimeout(resetViewport, 80)
+    resetPageScroll()
+    setTimeout(resetPageScroll, 80)
+    setTimeout(resetPageScroll, 600)
   }
   renderedView = state.view
   wire()
   restoreChatScroll()
   scheduleBotTurn()
 }
+window.addEventListener('pageshow', () => { if (state.view === 'game') setTimeout(resetPageScroll, 0) })
 function enterRoom(room) { state.demoMode = false; state.room = room; state.code = room.code; state.view = room.status === 'playing' ? 'game' : 'lobby'; setRoomUrl(room.code); saveState(); subscribeRoom(); render() }
 function rejoinExistingPlayer(room, player) {
   state.currentPlayerId = player.id
@@ -835,7 +848,7 @@ async function joinRoom(code) {
   if (!room) {
     try { room = await getRemoteRoom(code) } catch { room = null }
   }
-  if (!room && demoRoom) room = { ...newRoom({ name: demoRoom.name, playerName: '은지', maxPlayers: demoRoom.maxPlayers, visibility: 'public', password: '' }), code, players: Array.from({ length: demoRoom.players }, (_, index) => ({ id: index === 0 ? uid('host') : uid('player'), name: DEMO_PLAYER_NAMES[index % DEMO_PLAYER_NAMES.length], team: index % 2, isHost: index === 0, hand: [] })) }
+  if (!room && demoRoom) room = { ...newRoom({ name: demoRoom.name, playerName: 'AI 1', maxPlayers: demoRoom.maxPlayers, visibility: 'public', password: '' }), code, players: Array.from({ length: demoRoom.players }, (_, index) => ({ id: index === 0 ? uid('host') : uid('player'), name: DEMO_PLAYER_NAMES[index % DEMO_PLAYER_NAMES.length], team: index % 2, isHost: index === 0, hand: [] })) }
   if (!room) return toast('방을 찾을 수 없어요. 초대 코드를 확인해 주세요.')
   if (room.visibility === 'private') { const password = window.prompt('비공개 방 비밀번호를 입력해 주세요.') || ''; if (password !== room.password) return toast('비밀번호가 맞지 않아요.') }
   const name = getName() === '플레이어' ? (window.prompt('플레이어 이름을 입력해 주세요.') || '플레이어') : getName()
@@ -1110,21 +1123,34 @@ function startAudio() {
 function setVolume(value) { state.volume = Math.max(0, Math.min(1, Number(value))); if (audio?.master) audio.master.gain.value = state.volume; saveState() }
 function toggleSound() { state.soundOn = !state.soundOn; if (state.soundOn) startAudio(); else if (audio) { clearInterval(audio.interval); audio.ctx.close(); audio = null } saveState(); render(); toast(state.soundOn ? '잔잔한 테이블 BGM을 켰어요.' : 'BGM을 껐어요.') }
 async function dismissCelebration() {
-  if (!state.room?.lastMove?.sequence) return
+  const moveAt = state.room?.lastMove?.at
+  if (!state.room?.lastMove?.sequence || !moveAt || celebrationDismissInFlight) return
+  celebrationDismissInFlight = true
+  dismissedCelebrationAt = moveAt
+  state.room = { ...state.room, lastMove: { ...state.room.lastMove, sequence: null } }
+  saveState()
+  render()
   if (window.SequenceDB && !state.demoMode) {
     try {
-      const updated = await transactRoom(remote => { if (!remote.lastMove) return false; remote.lastMove.sequence = null })
-      if (!updated) return toast('게임 상태가 바뀌어 연출을 닫지 못했어요.')
-      state.room = updated
+      const updated = await transactRoom(remote => {
+        if (remote.lastMove?.at !== moveAt) return false
+        remote.lastMove = { ...remote.lastMove, sequence: null }
+      })
+      if (updated && state.room?.lastMove?.at === moveAt) {
+        state.room = updated
+        saveState()
+        render()
+      }
     } catch (error) {
       console.warn('Sequence celebration update unavailable', error)
-      return toast('게임 상태를 저장하지 못했어요. 연결을 확인해 주세요.')
+      toast('연출은 닫혔지만 서버 동기화가 지연되고 있어요.')
+    } finally {
+      celebrationDismissInFlight = false
     }
-  } else {
-    state.room.lastMove.sequence = null
-    persistRoom()
+    return
   }
-  saveState(); render()
+  persistRoom()
+  celebrationDismissInFlight = false
 }
 function copyInvite() {
   if (!state.room?.code) return
