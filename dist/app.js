@@ -9,6 +9,7 @@ const TEAM_NAMES = ['초록', '파랑', '분홍', '금빛', '보라', '청록', 
 const DEFAULT_NAMES = ['Caroline', 'Theresa', '민준', '서연', '하림', '지호', '다은', '현우', '유나', '도윤', '채원', '준서']
 const VALID_PLAYER_COUNTS = [2, 3, 4, 6, 8, 9, 10, 12]
 const VALID_TEAM_COUNTS = [2, 3]
+const TURN_LIMIT_OPTIONS = [30, 60, 90, 120, 180]
 
 const DEMO_ROOMS = [
   { code: 'MOSS88A1', name: '금요일 밤 카드 한 판', players: 4, maxPlayers: 6, visibility: 'public', status: 'waiting' },
@@ -304,6 +305,7 @@ function normalizeTeams(room) {
 }
 function normalizeRoomShape(room) {
   if (!room) return room
+  if (!TURN_LIMIT_OPTIONS.includes(Number(room.turnLimitSeconds))) room.turnLimitSeconds = 60
   if (!VALID_TEAM_COUNTS.includes(Number(room.teamCount))) room.teamCount = teamCountFor(Number(room.maxPlayers) || room.players?.length || 2)
   normalizeTeams(room)
   if (room.status === 'waiting') {
@@ -314,10 +316,12 @@ function normalizeRoomShape(room) {
   }
   return room
 }
-function newRoom({ name, playerName, maxPlayers, visibility, password }) {
+function turnLimitFor(room) { return TURN_LIMIT_OPTIONS.includes(Number(room?.turnLimitSeconds)) ? Number(room.turnLimitSeconds) : 60 }
+function newRoom({ name, playerName, maxPlayers, visibility, password, turnLimitSeconds = 60 }) {
   const teamCount = teamCountFor(Number(maxPlayers))
+  const turnLimit = TURN_LIMIT_OPTIONS.includes(Number(turnLimitSeconds)) ? Number(turnLimitSeconds) : 60
   const players = [{ id: state.currentPlayerId, name: playerName, team: 0, isHost: true, hand: [] }]
-  const room = { code: roundCode(), name, visibility, password: visibility === 'private' ? password : '', maxPlayers, players, status: 'waiting', teamCount, board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: 60, lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
+  const room = { code: roundCode(), name, visibility, password: visibility === 'private' ? password : '', maxPlayers, players, status: 'waiting', teamCount, turnLimitSeconds: turnLimit, board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: turnLimit, lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
   normalizeTeams(room)
   return room
 }
@@ -343,7 +347,8 @@ function startGame(room) {
     room.players.forEach(player => { if (room.deck.length) player.hand.push(room.deck.pop()) })
   }
   room.currentPlayerIndex = room.turnStarter ?? Math.floor(Math.random() * room.players.length)
-  room.turnSeconds = 60
+  room.turnLimitSeconds = turnLimitFor(room)
+  room.turnSeconds = room.turnLimitSeconds
   room.turnStartedAt = Date.now()
   room.lastMove = null
 }
@@ -351,7 +356,7 @@ function currentPlayer(room = state.room) { return room?.players?.[room.currentP
 function me(room = state.room) { return room?.players?.find(player => player.id === state.currentPlayerId) || null }
 function isMyTurn(room = state.room) { return room?.status === 'playing' && currentPlayer(room)?.id === state.currentPlayerId }
 function currentTeam(room = state.room) { return me(room)?.team ?? 0 }
-function calculateTurnSeconds(room) { return Math.max(0, 60 - Math.floor((Date.now() - (room.turnStartedAt || Date.now())) / 1000)) }
+function calculateTurnSeconds(room) { return Math.max(0, turnLimitFor(room) - Math.floor((Date.now() - (room.turnStartedAt || Date.now())) / 1000)) }
 function drawCard(room) {
   if (!room.deck?.length && room.discard?.length) {
     room.deck = shuffle(room.discard)
@@ -423,13 +428,13 @@ function finishMove(room, card, cellIndex) {
   const needed = room.teamCount === 2 ? 2 : 1
   if (teamWins >= needed) { room.status = 'finished'; room.winnerTeam = player.team; room.turnStartedAt = null; return }
   room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length
-  room.turnSeconds = 60
+  room.turnSeconds = turnLimitFor(room)
   room.turnStartedAt = Date.now()
   room.players.forEach(item => { delete item.selectedCard; delete item.deadSwapUsed })
 }
 function cycleTurn(room) {
   room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.players.length
-  room.turnSeconds = 60
+  room.turnSeconds = turnLimitFor(room)
   room.turnStartedAt = Date.now()
   room.players.forEach(item => { delete item.selectedCard; delete item.deadSwapUsed })
   toast('시간이 끝나 다음 차례로 넘어갔어요.')
@@ -448,8 +453,8 @@ async function advanceTurnIfExpired() {
     await window.SequenceDB.runTransaction(async transaction => {
       const snapshot = await transaction.get(roomRef)
       const remote = snapshot.data()
-      if (!remote || remote.status !== 'playing' || remote.turnStartedAt !== reference || Date.now() - remote.turnStartedAt < 60000) return
-      const updated = { ...remote, currentPlayerIndex: (remote.currentPlayerIndex + 1) % remote.players.length, turnSeconds: 60, turnStartedAt: Date.now(), players: remote.players.map(player => ({ ...player })) }
+      if (!remote || remote.status !== 'playing' || remote.turnStartedAt !== reference || Date.now() - remote.turnStartedAt < turnLimitFor(remote) * 1000) return
+      const updated = { ...remote, currentPlayerIndex: (remote.currentPlayerIndex + 1) % remote.players.length, turnSeconds: turnLimitFor(remote), turnStartedAt: Date.now(), players: remote.players.map(player => ({ ...player })) }
       updated.players.forEach(player => { delete player.selectedCard; delete player.deadSwapUsed })
       transaction.set(roomRef, remoteRoomPayload(updated))
     })
@@ -469,7 +474,7 @@ function header(label = 'home') {
 function homePage() {
   const defaultTeamCount = 2
   const playerOptions = playerCountsFor(defaultTeamCount)
-  return `<div class="site-shell landing"><div class="lobby-noise"></div>${header('home')}<main class="landing-main"><section class="hero-copy"><div class="eyebrow"><span></span> 클래식 보드게임, 온라인으로</div><h1>카드 한 장.<br><strong>한 수 앞서.</strong></h1><p>친구들을 테이블로 불러 모으세요. 다섯 개를 한 줄로 잇고,<br>속내를 감춰 보세요.</p><div class="hero-foot"><span>✣　2—12명 플레이</span><i></i><span>실시간으로 함께</span></div><button class="demo-cta" data-action="demo"><span class="demo-cta-mark">▶</span><span><b>데모 테이블 보기</b><small>가입 없이 게임 화면을 먼저 확인하세요</small></span><strong>→</strong></button></section><section class="entry-grid"><div class="entry-card create-panel"><div class="panel-kicker"><span class="panel-icon">＋</span><span>게임 준비</span><b>01</b></div><h2>방 만들기</h2><p class="panel-copy">친구들을 초대할 테이블을 준비해요.</p><form id="createForm" class="form-stack"><label class="field-label">내 이름<input name="name" maxlength="16" placeholder="사용할 이름을 입력하세요" value="${escapeHtml(getName())}" required /></label><label class="field-label">방 이름<input name="roomName" value="금요일 밤 카드 한 판" maxlength="32" required /></label><div class="field-row"><label class="field-label">인원 수<select name="maxPlayers" id="maxPlayers">${playerOptions.map(n => `<option value="${n}" ${n === 4 ? 'selected' : ''}>${n}명</option>`).join('')}</select></label><label class="field-label">팀 수<select name="teamCount" id="teamCount">${VALID_TEAM_COUNTS.map(n => `<option value="${n}" ${n === defaultTeamCount ? 'selected' : ''}>${n}팀</option>`).join('')}</select></label></div><div class="field-row"><label class="field-label">방 공개 설정<select name="visibility" id="visibility"><option value="public">공개 방</option><option value="private">비공개 방</option></select></label><label class="field-label field-note">공개 방은 비밀번호 없이 바로 참가할 수 있어요.</label></div><div id="passwordField" class="field-label password-field hidden">방 비밀번호<input name="password" type="password" minlength="4" placeholder="4자 이상 입력" /></div><label class="privacy-toggle"><input type="checkbox" name="sound" ${state.soundOn ? 'checked' : ''} /><span></span><b>게임 시작 시 BGM 켜기</b><small>첫 클릭 후 안전하게 재생돼요</small></label><button class="primary-cta" type="submit">방 만들기 <span>→</span></button></form></div><div class="entry-card join-panel"><div class="panel-kicker"><span class="panel-icon door">⌂</span><span>초대 코드가 있나요?</span><b>02</b></div><h2>방 참가</h2><p class="panel-copy">공개 방은 코드·초대 링크 어느 쪽으로도 바로 입장해요.</p><form id="joinForm" class="form-stack"><label class="field-label">초대 코드<input name="code" maxlength="8" placeholder="8자리 코드 입력" autocomplete="off" required /></label><button class="primary-cta join-cta" type="submit">방 참가 <span>→</span></button></form><button class="secondary-cta" data-action="rooms">공개 방 둘러보기 <span>↗</span></button></div></section><div class="landing-rule"><span>♠</span> SEQUENCE ARENA <i>카드 한 장으로 시작되는 저녁</i></div></main></div>`
+  return `<div class="site-shell landing"><div class="lobby-noise"></div>${header('home')}<main class="landing-main"><section class="hero-copy"><div class="eyebrow"><span></span> 클래식 보드게임, 온라인으로</div><h1>카드 한 장.<br><strong>한 수 앞서.</strong></h1><p>친구들을 테이블로 불러 모으세요. 다섯 개를 한 줄로 잇고,<br>속내를 감춰 보세요.</p><div class="hero-foot"><span>✣　2—12명 플레이</span><i></i><span>실시간으로 함께</span></div><button class="demo-cta" data-action="demo"><span class="demo-cta-mark">▶</span><span><b>데모 테이블 보기</b><small>가입 없이 게임 화면을 먼저 확인하세요</small></span><strong>→</strong></button></section><section class="entry-grid"><div class="entry-card create-panel"><div class="panel-kicker"><span class="panel-icon">＋</span><span>게임 준비</span><b>01</b></div><h2>방 만들기</h2><p class="panel-copy">친구들을 초대할 테이블을 준비해요.</p><form id="createForm" class="form-stack"><label class="field-label">내 이름<input name="name" maxlength="16" placeholder="사용할 이름을 입력하세요" value="${escapeHtml(getName())}" required /></label><label class="field-label">방 이름<input name="roomName" value="금요일 밤 카드 한 판" maxlength="32" required /></label><div class="field-row"><label class="field-label">인원 수<select name="maxPlayers" id="maxPlayers">${playerOptions.map(n => `<option value="${n}" ${n === 4 ? 'selected' : ''}>${n}명</option>`).join('')}</select></label><label class="field-label">팀 수<select name="teamCount" id="teamCount">${VALID_TEAM_COUNTS.map(n => `<option value="${n}" ${n === defaultTeamCount ? 'selected' : ''}>${n}팀</option>`).join('')}</select></label></div><div class="field-row"><label class="field-label">방 공개 설정<select name="visibility" id="visibility"><option value="public">공개 방</option><option value="private">비공개 방</option></select></label><label class="field-label">착수 시간<select name="turnLimitSeconds" id="turnLimitSeconds">${TURN_LIMIT_OPTIONS.map(seconds => `<option value="${seconds}" ${seconds === 60 ? 'selected' : ''}>${seconds}초</option>`).join('')}</select></label></div><small class="field-note">공개 방은 비밀번호 없이 바로 참가할 수 있어요.</small><div id="passwordField" class="field-label password-field hidden">방 비밀번호<input name="password" type="password" minlength="4" placeholder="4자 이상 입력" /></div><label class="privacy-toggle"><input type="checkbox" name="sound" ${state.soundOn ? 'checked' : ''} /><span></span><b>게임 시작 시 BGM 켜기</b><small>첫 클릭 후 안전하게 재생돼요</small></label><button class="primary-cta" type="submit">방 만들기 <span>→</span></button></form></div><div class="entry-card join-panel"><div class="panel-kicker"><span class="panel-icon door">⌂</span><span>초대 코드가 있나요?</span><b>02</b></div><h2>방 참가</h2><p class="panel-copy">공개 방은 코드·초대 링크 어느 쪽으로도 바로 입장해요.</p><form id="joinForm" class="form-stack"><label class="field-label">초대 코드<input name="code" maxlength="8" placeholder="8자리 코드 입력" autocomplete="off" required /></label><button class="primary-cta join-cta" type="submit">방 참가 <span>→</span></button></form><button class="secondary-cta" data-action="rooms">공개 방 둘러보기 <span>↗</span></button></div></section><div class="landing-rule"><span>♠</span> SEQUENCE ARENA <i>카드 한 장으로 시작되는 저녁</i></div></main></div>`
 }
 function roomsPage() {
   const localRooms = Object.keys(localStorage).filter(key => key.startsWith('sequence-room-')).map(key => { try { return JSON.parse(localStorage.getItem(key)) } catch { return null } }).filter(room => room?.visibility === 'public' && room.status === 'waiting')
@@ -483,7 +488,7 @@ function lobbyPage() {
   const revealMarkup = room.turnRevealed ? `<span class="winner-sparkle">✦</span><strong>${escapeHtml(room.players[room.turnStarter]?.name || '')}</strong><small>첫 차례입니다</small>` : '<span class="question-mark">?</span><small>시작하면 랜덤으로 정해요</small>'
   const validStart = canStartRoom(room)
   const startHint = room.players.length < 2 ? '플레이어가 2명 이상 모이면 시작할 수 있어요.' : validStart ? '방장이 카드를 나누면 랜덤으로 첫 차례가 정해져요.' : `${room.teamCount}팀 대전은 참가자 수가 ${room.teamCount}의 배수여야 해요.`
-  return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b></div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>${startHint}</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''}">${revealMarkup}</div><div class="rule-facts"><span><b>${room.teamCount}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>60초</b> 턴 타이머</span></div>${isHost ? `<button class="start-button" data-action="start-game" ${validStart ? '' : 'disabled'}>카드 나누고 시작하기 <span>→</span></button>` : '<div class="host-wait">방장이 카드를 나누면 랜덤으로 첫 차례가 정해지고 게임이 시작돼요.</div>'}</div></section></main></div>`
+  return `<div class="site-shell lobby-shell"><div class="lobby-noise"></div>${header()}<main class="lobby-main"><div class="lobby-top"><div><button class="back-link" data-action="leave">← 방 나가기</button><div class="eyebrow"><span></span> WAITING ROOM</div><h1>${escapeHtml(room.name)}</h1><p>친구를 초대하고, 첫 차례를 정해 주세요.</p></div><div class="entry-code"><small>방 코드</small><strong>${room.code}</strong><button data-action="copy-code">코드 복사</button></div></div><section class="lobby-grid"><div class="panel lobby-card"><div class="panel-heading"><div><span class="panel-kicker">TABLE ${room.visibility === 'public' ? '· 공개' : '· 비공개'}</span><h2>플레이어 <em>${room.players.length} / ${room.maxPlayers}</em></h2></div><span class="live-pill">● LIVE</span></div><div class="member-list">${Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ? `<div class="member-row"><span class="member-chip" style="--member-color:${TEAM_COLORS[room.players[index].team]}">${escapeHtml(room.players[index].name.slice(0, 1))}</span><span><strong>${escapeHtml(room.players[index].name)}</strong>${room.players[index].isHost ? '<small>방장</small>' : ''}</span><b class="team-label">${TEAM_NAMES[room.players[index].team]} 팀</b></div>` : `<div class="member-row empty-seat"><span>＋</span><span>친구를 초대해 주세요</span><small>${index + 1}번 자리</small></div>`).join('')}</div><div class="invite-mini"><span>친구에게 초대 코드를 보내세요</span><strong>${room.code}</strong><button data-action="copy-code">복사</button></div></div><div class="panel lobby-card rules-card"><div class="panel-heading"><div><span class="panel-kicker">STARTING ORDER</span><h2>첫 차례 정하기</h2></div><span class="sequence-mark">✦</span></div><p>${startHint}</p><div class="turn-reveal ${room.turnRevealed ? 'revealed' : ''}">${revealMarkup}</div><div class="rule-facts"><span><b>${room.teamCount}</b> 팀 대전</span><span><b>5</b>개를 한 줄로</span><span><b>${turnLimitFor(room)}초</b> 턴 타이머</span></div>${isHost ? `<button class="start-button" data-action="start-game" ${validStart ? '' : 'disabled'}>카드 나누고 시작하기 <span>→</span></button>` : '<div class="host-wait">방장이 카드를 나누면 랜덤으로 첫 차례가 정해지고 게임이 시작돼요.</div>'}</div></section></main></div>`
 }
 function playerPanel(room) {
   return `<aside class="side-panel players-panel"><div class="side-heading"><span>플레이어</span><span class="side-heading-count">${room.players.length}명</span></div>${room.players.map(player => `<div class="player-card ${player.id === state.currentPlayerId ? 'is-me' : ''} ${player.id === currentPlayer(room)?.id ? 'active-turn' : ''}"><span class="player-token" style="--token:${TEAM_COLORS[player.team]}">${escapeHtml(player.name.slice(0, 1))}</span><span class="player-details"><strong>${escapeHtml(player.name)}${player.id === state.currentPlayerId ? ' <em>나</em>' : ''}</strong><small>${TEAM_NAMES[player.team]} 팀 · ${player.hand?.length || 0}장</small></span>${player.id === currentPlayer(room)?.id ? '<i class="player-light"></i>' : ''}</div>`).join('')}<div class="team-scoreboard"><div class="side-heading"><span>시퀀스</span><span class="side-heading-count">${room.teamCount === 2 ? '2개면 승리' : '1개면 승리'}</span></div>${Array.from({ length: room.teamCount }, (_, team) => `<div class="score-row"><i style="background:${TEAM_COLORS[team]}"></i><span>${TEAM_NAMES[team]}</span><strong>${room.sequences.filter(sequence => sequence.team === team).length}</strong></div>`).join('')}</div><div class="rules-mini">♧　완성된 시퀀스의 칩은 제거할 수 없어요.</div></aside>`
@@ -547,12 +552,13 @@ function rejoinExistingPlayer(room, player) {
   toast(room.status === 'waiting' ? '대기방에 다시 참가했어요.' : '진행 중인 게임에 다시 연결했어요.')
 }
 async function createRoom(form) {
-  const data = new FormData(form), playerName = String(data.get('name') || '').trim(), roomName = String(data.get('roomName') || '').trim(), maxPlayers = Number(data.get('maxPlayers')), teamCount = Number(data.get('teamCount')), visibility = String(data.get('visibility')), password = String(data.get('password') || '')
+  const data = new FormData(form), playerName = String(data.get('name') || '').trim(), roomName = String(data.get('roomName') || '').trim(), maxPlayers = Number(data.get('maxPlayers')), teamCount = Number(data.get('teamCount')), turnLimitSeconds = Number(data.get('turnLimitSeconds')), visibility = String(data.get('visibility')), password = String(data.get('password') || '')
   if (!playerName || !roomName) return toast('이름과 방 이름을 입력해 주세요.')
   if (!VALID_PLAYER_COUNTS.includes(maxPlayers) || !VALID_TEAM_COUNTS.includes(teamCount) || maxPlayers % teamCount !== 0) return toast('인원수와 팀 수를 맞춰 주세요.')
+  if (!TURN_LIMIT_OPTIONS.includes(turnLimitSeconds)) return toast('착수 시간을 확인해 주세요.')
   if (visibility === 'private' && password.length < 4) return toast('비공개 방 비밀번호는 4자 이상 입력해 주세요.')
   setName(playerName)
-  const room = newRoom({ name: roomName, playerName, maxPlayers, visibility, password }); room.teamCount = teamCount; normalizeTeams(room)
+  const room = newRoom({ name: roomName, playerName, maxPlayers, visibility, password, turnLimitSeconds }); room.teamCount = teamCount; normalizeTeams(room)
   state.room = room; state.code = room.code; state.view = 'lobby'; setRoomUrl(room.code); if (data.get('sound')) { state.soundOn = true; startAudio() }
   await persistRoom(); saveState(); subscribeRoom(); if (state.soundOn) startAudio(); render(); toast(`방이 만들어졌어요 · ${room.code}`)
 }
@@ -619,7 +625,7 @@ async function leaveRoom() {
           if (removedIndex < updated.currentPlayerIndex) updated.currentPlayerIndex -= 1
           if (updated.currentPlayerIndex >= remaining.length) updated.currentPlayerIndex = 0
           updated.turnStartedAt = Date.now()
-          updated.turnSeconds = 60
+          updated.turnSeconds = turnLimitFor(updated)
           remaining.forEach(player => { delete player.selectedCard; delete player.deadSwapUsed })
         }
         transaction.set(roomRef, remoteRoomPayload(updated))
@@ -733,7 +739,7 @@ async function exchangeDeadCard() {
         remotePlayer.deadSwapUsed = true
         delete remotePlayer.selectedCard
         remote.currentPlayerIndex = (remote.currentPlayerIndex + 1) % remote.players.length
-        remote.turnSeconds = 60
+        remote.turnSeconds = turnLimitFor(remote)
         remote.turnStartedAt = Date.now()
         remote.players.forEach(item => { delete item.selectedCard; delete item.deadSwapUsed })
       })
@@ -862,7 +868,7 @@ function copyInvite() {
   toast('초대 링크를 복사했어요.')
 }
 function freshWaitingRoom(room) {
-  const next = { ...room, status: 'waiting', board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: 60, lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
+  const next = { ...room, status: 'waiting', turnLimitSeconds: turnLimitFor(room), board: buildBoard(), deck: [], discard: [], currentPlayerIndex: 0, turnSeconds: turnLimitFor(room), lastMove: null, moveHistory: [], sequences: [], winnerTeam: null, turnStarter: null, turnRevealed: false, turnStartedAt: null, chat: [] }
   next.players = (room.players || []).map(player => ({ ...player, hand: [], selectedCard: undefined, deadSwapUsed: undefined }))
   normalizeTeams(next)
   return next
