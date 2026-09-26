@@ -31,6 +31,7 @@ let publicRoomsReconnectTimer = 0
 let roomReconnectDelay = 1000
 let publicRoomsReconnectDelay = 1000
 let inviteJoinStarted = false
+let roomMigrationInFlight = false
 
 function uid(prefix = 'id') { return `${prefix}-${Math.random().toString(36).slice(2, 8)}-${Date.now().toString(36).slice(-4)}` }
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]) }
@@ -108,6 +109,28 @@ async function transactRoom(update) {
     return remote
   })
 }
+async function migrateWaitingRoom(code) {
+  if (roomMigrationInFlight || !window.SequenceDB || !code) return
+  roomMigrationInFlight = true
+  try {
+    const roomRef = window.SequenceDB.collection('sequenceRooms').doc(code)
+    await window.SequenceDB.runTransaction(async transaction => {
+      const snapshot = await transaction.get(roomRef)
+      const remote = snapshot.data()
+      if (!remote || remote.status !== 'waiting') return null
+      const needsBoardMigration = !Array.isArray(remote.board) || remote.board.length !== 100 || remote.board.some(cell => String(cell.card).startsWith('J'))
+      const needsTeamMigration = !VALID_TEAM_COUNTS.includes(Number(remote.teamCount))
+      if (!needsBoardMigration && !needsTeamMigration) return null
+      normalizeRoomShape(remote)
+      transaction.set(roomRef, remoteRoomPayload(remote))
+      return remote
+    })
+  } catch (error) {
+    console.warn('Sequence waiting-room migration unavailable', error)
+  } finally {
+    roomMigrationInFlight = false
+  }
+}
 async function getRemoteRoom(code) {
   if (!window.SequenceDB) return null
   let lastError
@@ -144,7 +167,9 @@ function subscribeRoom() {
     roomReconnectDelay = 1000
     state.connectionStatus = 'connected'
     if (!snapshot.exists || !state.room || snapshot.id !== state.room.code) return
-    const incoming = normalizeRoomShape(snapshot.data())
+    const incoming = snapshot.data()
+    const needsWaitingRoomMigration = incoming.status === 'waiting' && (!Array.isArray(incoming.board) || incoming.board.length !== 100 || incoming.board.some(cell => String(cell.card).startsWith('J')) || !VALID_TEAM_COUNTS.includes(Number(incoming.teamCount)))
+    normalizeRoomShape(incoming)
     if (state.movePending) return
     restorePlayerIdentity(incoming)
     const localPlayer = me(state.room)
@@ -163,6 +188,7 @@ function subscribeRoom() {
     if (incoming.status === 'waiting' && state.view === 'game') state.view = 'lobby'
     localStorage.setItem(`sequence-room-${state.room.code}`, JSON.stringify(state.room))
     if (state.view === 'lobby' || state.view === 'game') render()
+    if (needsWaitingRoomMigration) migrateWaitingRoom(incoming.code)
   }, error => { state.connectionStatus = 'reconnecting'; console.warn('Sequence realtime sync unavailable', error); remoteUnsubscribe = null; subscribedRoomCode = ''; scheduleRoomReconnect(); render() })
 }
 function subscribePublicRooms() {
