@@ -129,6 +129,14 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 @media (max-width: 520px) { .hero-copy h1 { font-size: 58px; }.hero-copy p br { display: none; }.field-row { grid-template-columns: 1fr; }.privacy-toggle { grid-template-columns: 18px 1fr; align-items: start; }.privacy-toggle small { grid-column: 2; grid-row: 2; text-align: left; }.rooms-list { padding: 18px 13px; }.rooms-list-head .secondary-cta { gap: 10px; }.room-row { grid-template-columns: 25px 1fr 58px 18px; gap: 7px; padding: 16px 0; }.room-info small { display: none; }.room-info strong { font-size: 15px; }.room-players b { font-size: 11px; }.rule-facts { grid-template-columns: 1fr; }.game-topbar .brand { font-size: 10px; }.game-topbar .brand-mark { width: 26px; height: 26px; }.leave-button { padding: 7px; font-size: 9px; }.hand-header { align-items: flex-end; }.hand-cards { gap: 6px; }.playing-card { flex-basis: 54px; width: 54px; height: 88px; }.cell-rank { font-size: 11px; }.cell-suit { font-size: 10px; }.celebration-card { padding: 25px 15px; }.celebration-card strong { font-size: 32px; }.celebration-chips i { width: 42px; height: 42px; border-width: 3px; }.chat-messages { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; } }
 
+/* Jack cards show the one-eye / two-eye action at a glance. */
+.jack-portrait { display: grid; place-items: center; gap: 1px; width: 42px; height: 53px; color: #1e654c; line-height: 1; }
+.jack-crown { color: #c4963c; font: 17px Georgia, serif; transform: translateY(2px); }
+.jack-face { display: flex; align-items: center; justify-content: center; gap: 3px; width: 30px; height: 17px; padding: 3px 4px; border: 2px solid currentColor; border-radius: 48% 48% 42% 42%; background: #f4d3a7; }
+.jack-face i { display: block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 1px rgba(255,255,255,.55); }
+.jack-portrait.remove .jack-face i { width: 7px; height: 3px; border-radius: 70% 10% 70% 10%; transform: rotate(-12deg); }
+.jack-portrait b { font: 18px Georgia, serif; }
+
 /* Source-owned shadcn-style layer: semantic tokens, restrained surfaces, and responsive primitives. */
 button, input, select { border-radius: var(--radius-sm); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; box-shadow: 0 0 0 4px color-mix(in oklab, var(--ring) 20%, transparent); }
